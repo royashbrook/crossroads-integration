@@ -353,7 +353,7 @@ function Send-CrossroadsDelivery($baseUrl, $clientId, $clientSecret, $cacheDir,
         'pending'
       }
       $message = if ($null -ne $response.data -and $response.data.PSObject.Properties['message']) { "$($response.data.message)" } else { '' }
-      $error = if ($stateCode -in @('X80', 'X90')) { '' } elseif (-not [string]::IsNullOrWhiteSpace($message)) { $message } else { $responseText }
+      $errorMessage = if ($stateCode -in @('X80', 'X90')) { '' } elseif (-not [string]::IsNullOrWhiteSpace($message)) { $message } else { $responseText }
 
       Set-DeliveryResult $item $stateCode $http $status $response.data $index
       if ($item.data.kind -eq 'create' -and $stateCode -eq 'X90') { $created = $true }
@@ -368,7 +368,7 @@ function Send-CrossroadsDelivery($baseUrl, $clientId, $clientSecret, $cacheDir,
         state = $StateNames[$stateCode]
         status = $status
         error_code = $errorCode
-        error = $error
+        error = $errorMessage
       }
     }
   }
