@@ -11,9 +11,9 @@ Install-Module CrossroadsIntegration
 Import-Module CrossroadsIntegration
 $orders = @(Get-CrossroadsTMWData -BillTo $billto -Division $division -From $from -Through $through -ConnectionString $connectionString)
 $delivery = @{ Tenant = $tenant; DestinationTenant = $destinationTenant }
-Initialize-CrossroadsDelivery $cacheDir
-$staged = @(Add-CrossroadsDelivery $orders $baseUrl $cacheDir $true @delivery)
-$results = @(Send-CrossroadsDelivery $baseUrl $clientId $clientSecret $cacheDir @delivery)
+Initialize-CrossroadsDelivery
+$staged = @(Add-CrossroadsDelivery -Orders $orders -BaseUrl $baseUrl -Persist $true @delivery)
+$results = @(Send-CrossroadsDelivery -BaseUrl $baseUrl -ClientId $clientId -ClientSecret $clientSecret @delivery)
 ```
 
 The example stages and sends. Use `$false` on Add-CrossroadsDelivery and omit Send-CrossroadsDelivery for a dry run. Credentials and URL are caller inputs; no customer configuration belongs in this folder.
@@ -29,6 +29,8 @@ Each complete envelope contains `order_number`, `updated_date`, `progress`, `hol
 URL, tenant pair, order, and logical request identify receipts. Hashes cover the base URL, tenant pair, path, and exact UTF-8 payload text, not the source update timestamp. Latest terminal receipts suppress replay; pending requests retry in sequence. A transient failure blocks later requests for that order only. Request files are replaced atomically, and receipts are saved before pending files are removed.
 
 Old object-format receipts and pending messages remain readable. Receipt lookup also recognizes compact JSON equivalents, so removing numeric padding does not resend successful requests. Only the latest receipt for each logical request is indexed. Old pending messages retain their queued representation until superseded or resolved. New messages are stored and sent unchanged through `CrossroadsClient -RawJson`. Terminal receipts age out under the existing retention rule, and pending messages remain until resolved.
+
+CacheDir is optional on all delivery/cursor commands. Its default is the absolute `cache` path beneath the caller's current filesystem directory, evaluated on each call, never beneath the installed module. Set the working directory before running the integration. For an isolated test or another location, pass `-CacheDir $path` consistently to every delivery/cursor call. Existing positional arguments remain supported.
 
 Use a separate cache directory per feed/source/tenant pair. Delivery filters tenant pairs, but a cursor belongs to one source selection, not an arbitrary mix of customers. Keep staging, cursor advancement, sends, and persistence under one serialized job. Pending files do not expire; terminal receipts expire after one day. Helpers retain the existing filename and hash formats.
 
