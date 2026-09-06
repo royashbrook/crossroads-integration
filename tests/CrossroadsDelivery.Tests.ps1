@@ -17,6 +17,31 @@ Describe 'Crossroads delivery' {
     }
   }
 
+  It 'rejects a <label> destination without changing existing state' -ForEach @(
+    @{ label = 'null'; url = $null }
+    @{ label = 'empty'; url = '' }
+    @{ label = 'whitespace'; url = " `t " }
+  ) {
+    $null = Add-CrossroadsDelivery $orders 'http://localhost:8808' $script:cache $true @delivery
+    $null = Set-CrossroadsDeliveryCursor $script:cache $null $orders
+    $before = @(Get-ChildItem $script:cache -File | Sort-Object Name | Get-FileHash).Hash
+
+    { Add-CrossroadsDelivery $orders $url $script:cache $true @delivery } | Should -Throw '*baseUrl*'
+    { Send-CrossroadsDelivery $url test test $script:cache @delivery } | Should -Throw '*baseUrl*'
+
+    @(Get-ChildItem $script:cache -File | Sort-Object Name | Get-FileHash).Hash | Should -Be $before
+    Should -Invoke Get-CrossroadsToken -ModuleName CrossroadsIntegration -Times 0 -Exactly
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly
+  }
+
+  It 'rejects a blank destination before touching a new cache' {
+    $cache = Join-Path $TestDrive 'not-created'
+    { Add-CrossroadsDelivery $orders '' $cache $true @delivery } | Should -Throw '*baseUrl*'
+    { Send-CrossroadsDelivery '' test test $cache @delivery } | Should -Throw '*baseUrl*'
+    Test-Path $cache | Should -BeFalse
+    Should -Invoke Get-CrossroadsToken -ModuleName CrossroadsIntegration -Times 0 -Exactly
+  }
+
   It 'suppresses an identical successful replay' {
     $null = Add-CrossroadsDelivery $orders 'http://localhost:8808' $script:cache $true @delivery
     $first = @(Send-CrossroadsDelivery 'http://localhost:8808' test test $script:cache @delivery)
