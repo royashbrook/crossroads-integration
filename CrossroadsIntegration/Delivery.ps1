@@ -152,7 +152,7 @@ function New-DeliveryItem($order, $request, $hash, $messageKey, $baseUrl, $cache
   [pscustomobject]@{ file = $file; data = $data }
 }
 
-function Initialize-CrossroadsDelivery($cacheDir) {
+function Initialize-CrossroadsDelivery($cacheDir = (Join-Path $PWD 'cache')) {
   Import-Module Clear-Files
   New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
   Push-Location $cacheDir
@@ -165,13 +165,13 @@ function Initialize-CrossroadsDelivery($cacheDir) {
   $null = Get-DeliveryIndex $cacheDir -Prune
 }
 
-function Get-CrossroadsDeliveryCursor($cacheDir) {
+function Get-CrossroadsDeliveryCursor($cacheDir = (Join-Path $PWD 'cache')) {
   $cursor = @(Get-ChildItem $cacheDir -Filter '*.cursor' -File | Sort-Object Name | Select-Object -Last 1)
   if ($cursor.Count -eq 0) { return }
   [datetime]::ParseExact($cursor[0].BaseName, 'yyyyMMddTHHmmssfff', [Globalization.CultureInfo]::InvariantCulture)
 }
 
-function Set-CrossroadsDeliveryCursor($cacheDir, $current, $rows) {
+function Set-CrossroadsDeliveryCursor($cacheDir = (Join-Path $PWD 'cache'), $current, $rows) {
   $latest = @($rows.updated_date | ForEach-Object { [datetime]$_ } | Sort-Object)[-1]
   if ($null -eq $current -or $latest -gt $current) {
     $stamp = $latest.ToString('yyyyMMddTHHmmssfff')
@@ -184,7 +184,7 @@ function Set-CrossroadsDeliveryCursor($cacheDir, $current, $rows) {
   $current
 }
 
-function Add-CrossroadsDelivery($orders, $baseUrl, $cacheDir, $persist,
+function Add-CrossroadsDelivery($orders, $baseUrl, $cacheDir = (Join-Path $PWD 'cache'), $persist,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$Tenant,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$DestinationTenant) {
   $baseUrl = $baseUrl.TrimEnd('/')
@@ -283,7 +283,7 @@ function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index
   $index.receipts[$key] = $item
 }
 
-function Send-CrossroadsDelivery($baseUrl, $clientId, $clientSecret, $cacheDir,
+function Send-CrossroadsDelivery($baseUrl, $clientId, $clientSecret, $cacheDir = (Join-Path $PWD 'cache'),
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$Tenant,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$DestinationTenant) {
   $baseUrl = $baseUrl.TrimEnd('/')
