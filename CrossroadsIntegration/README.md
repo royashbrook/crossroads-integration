@@ -32,6 +32,8 @@ Old object-format receipts and pending messages remain readable. Receipt lookup 
 
 CacheDir is optional on all delivery/cursor commands. Its default is the absolute `cache` path beneath the caller's current filesystem directory, evaluated on each call, never beneath the installed module. Set the working directory before running the integration. For an isolated test or another location, pass `-CacheDir $path` consistently to every delivery/cursor call. Existing positional arguments remain supported.
 
+Add-CrossroadsDelivery and Send-CrossroadsDelivery require a nonblank BaseUrl. Invalid values fail at parameter binding, before reading or writing delivery state or requesting a token.
+
 Use a separate cache directory per feed/source/tenant pair. Delivery filters tenant pairs, but a cursor belongs to one source selection, not an arbitrary mix of customers. Keep staging, cursor advancement, sends, and persistence under one serialized job. Pending files do not expire; terminal receipts expire after one day. Helpers retain the existing filename and hash formats.
 
 `Get-CrossroadsDeliveryCursor` reads the last staged source watermark. `Set-CrossroadsDeliveryCursor` advances it after all returned rows are staged. The caller owns database clock, overlap, first-run range, logs, scheduling, and publishing cache state. No-data runs must still send existing pending requests.

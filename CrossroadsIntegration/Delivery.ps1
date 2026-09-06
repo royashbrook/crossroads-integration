@@ -184,7 +184,9 @@ function Set-CrossroadsDeliveryCursor($cacheDir = (Join-Path $PWD 'cache'), $cur
   $current
 }
 
-function Add-CrossroadsDelivery($orders, $baseUrl, $cacheDir = (Join-Path $PWD 'cache'), $persist,
+function Add-CrossroadsDelivery($orders,
+  [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$baseUrl,
+  $cacheDir = (Join-Path $PWD 'cache'), $persist,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$Tenant,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$DestinationTenant) {
   $baseUrl = $baseUrl.TrimEnd('/')
@@ -283,7 +285,9 @@ function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index
   $index.receipts[$key] = $item
 }
 
-function Send-CrossroadsDelivery($baseUrl, $clientId, $clientSecret, $cacheDir = (Join-Path $PWD 'cache'),
+function Send-CrossroadsDelivery(
+  [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$baseUrl,
+  $clientId, $clientSecret, $cacheDir = (Join-Path $PWD 'cache'),
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$Tenant,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$DestinationTenant) {
   $baseUrl = $baseUrl.TrimEnd('/')
