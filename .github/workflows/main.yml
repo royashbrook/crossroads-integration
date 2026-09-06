@@ -1,0 +1,80 @@
+name: main
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install test modules
+        shell: pwsh
+        run: Install-Module Pester,PSScriptAnalyzer,CrossroadsClient,Clear-Files -Scope CurrentUser -Force -SkipPublisherCheck
+      - name: Validate
+        shell: pwsh
+        run: |
+          Test-ModuleManifest ./CrossroadsIntegration/CrossroadsIntegration.psd1 -ErrorAction Stop
+          Invoke-Pester ./tests -CI
+          $findings = @(Invoke-ScriptAnalyzer ./CrossroadsIntegration -Recurse -Severity Warning,Error)
+          $findings | Format-Table -AutoSize
+          if ($findings.Where({ $_.Severity -eq 'Error' })) { throw 'PSScriptAnalyzer found errors.' }
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    concurrency:
+      group: psgallery-${{ github.sha }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $releaseTag = @(& git tag --points-at HEAD) -match '^v\d+\.\d+$'
+          if ($env:GITHUB_REF_TYPE -eq 'branch' -and $releaseTag) {
+            'publish=false' >> $env:GITHUB_OUTPUT
+            exit
+          }
+          $version = ./scripts/Get-PackageVersion.ps1 -AllowMissing
+          if (-not $version) {
+            'publish=false' >> $env:GITHUB_OUTPUT
+            exit
+          }
+          $exists = Find-Module CrossroadsIntegration -RequiredVersion $version -ErrorAction SilentlyContinue
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "publish=$((-not $exists).ToString().ToLower())" >> $env:GITHUB_OUTPUT
+      - name: Publish ${{ steps.version.outputs.version }}
+        if: steps.version.outputs.publish == 'true'
+        shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP CrossroadsIntegration
+          Install-Module CrossroadsClient,Clear-Files -Scope CurrentUser -Force
+          $manifest = Import-PowerShellDataFile ./CrossroadsIntegration/CrossroadsIntegration.psd1
+          foreach ($file in $manifest.FileList) {
+            $target = Join-Path $path $file
+            $null = New-Item -ItemType Directory (Split-Path $target) -Force
+            Copy-Item (Join-Path ./CrossroadsIntegration $file) $target
+          }
+          Update-ModuleManifest "$path/CrossroadsIntegration.psd1" -ModuleVersion '${{ steps.version.outputs.version }}'
+          Test-ModuleManifest "$path/CrossroadsIntegration.psd1" -ErrorAction Stop
+          Publish-Module -Path $path -NuGetApiKey $env:PSGALLERY_API_KEY -Repository PSGallery
