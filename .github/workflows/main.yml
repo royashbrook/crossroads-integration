@@ -33,9 +33,20 @@ jobs:
           $findings | Format-Table -AutoSize
           if ($findings.Where({ $_.Severity -eq 'Error' })) { throw 'PSScriptAnalyzer found errors.' }
 
+  sql-projection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        shell: pwsh
+        run: Install-Module CrossroadsClient,Clear-Files -Scope CurrentUser -Force
+      - name: Verify synthetic SQL projection
+        shell: pwsh
+        run: ./tests/Invoke-SqlProjection.ps1
+
   publish:
     if: github.event_name != 'pull_request'
-    needs: validate
+    needs: [validate, sql-projection]
     runs-on: ubuntu-latest
     concurrency:
       group: psgallery-${{ github.sha }}

@@ -182,16 +182,19 @@ function Get-CrossroadsDeliverySummary($cacheDir = (Join-Path $PWD 'cache')) {
 }
 
 function Initialize-CrossroadsDelivery($cacheDir = (Join-Path $PWD 'cache')) {
-  Import-Module Clear-Files
+  $null = Initialize-Delivery $cacheDir
+}
+
+function Initialize-Delivery($cacheDir) {
   New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
   Push-Location $cacheDir
   try {
-    Clear-Files ([pscustomobject]@{ keepdays = 1; purgefiles = '*.cache,*.X40.*.json,*.X80.*.json,*.X90.*.json' })
+    $null = Clear-Files ([pscustomobject]@{ keepdays = 1; purgefiles = '*.cache,*.X40.*.json,*.X80.*.json,*.X90.*.json' })
   }
   finally {
     Pop-Location
   }
-  $null = Get-DeliveryIndex $cacheDir -Prune
+  Get-DeliveryIndex $cacheDir -Prune
 }
 
 function Get-CrossroadsDeliveryCursor($cacheDir = (Join-Path $PWD 'cache')) {
@@ -218,8 +221,14 @@ function Add-CrossroadsDelivery($orders,
   $cacheDir = (Join-Path $PWD 'cache'), $persist,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$Tenant,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$DestinationTenant) {
+  Add-Delivery $orders $baseUrl $cacheDir $persist $Tenant $DestinationTenant (Get-DeliveryIndex $cacheDir)
+}
+
+function Add-Delivery($orders, $baseUrl, $cacheDir, $persist, $Tenant, $DestinationTenant, $index) {
+  if (@($orders | Group-Object order_number | Where-Object Count -gt 1).Count) {
+    throw 'Supply one complete latest snapshot per order in each batch.'
+  }
   $baseUrl = $baseUrl.TrimEnd('/')
-  $index = Get-DeliveryIndex $cacheDir
   $staged = [Collections.Generic.List[object]]::new()
 
   foreach ($order in $orders) {
@@ -254,6 +263,7 @@ function Add-CrossroadsDelivery($orders,
         if ($current.ContainsKey($old.data.message_key) -and $current[$old.data.message_key] -contains $old.data.hash) { continue }
         Remove-Item -LiteralPath $old.file
         $index.pending_by_hash.Remove($old.data.hash)
+        $null = $index.pending.Remove($old)
       }
     }
 
@@ -314,6 +324,45 @@ function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index
   $index.receipts[$key] = $item
 }
 
+function Get-DeliveryResponse($response, $kind, $orderNumber) {
+  $http = if ($null -eq $response.http) { 0 } else { [int]$response.http }
+  $parseError = if ($response.PSObject.Properties['parse_error']) { $response.parse_error } else { $null }
+  $responseText = if ($null -eq $response.data) { '' } else { ConvertTo-Json -InputObject $response.data -Depth 12 -Compress }
+  $responseStatus = if ($null -ne $response.data -and $response.data.PSObject.Properties['status']) { "$($response.data.status)" } else { '' }
+  $errorCode = $response.data
+  foreach ($field in @('log', 'detail', 'error')) {
+    $errorCode = if ($null -ne $errorCode -and $errorCode.PSObject.Properties[$field]) { $errorCode.$field } else { $null }
+  }
+  $accepted = -not $parseError -and $http -ge 200 -and $http -lt 300
+  $duplicate = -not $parseError -and $kind -eq 'create' -and ($accepted -or $http -eq 422) -and $(
+    if ($errorCode) { $errorCode -eq 'request.order_already_exists' }
+    else {
+      $http -eq 422 -and $null -ne $response.data -and $response.data.PSObject.Properties['detail'] -and
+      $response.data.detail -ceq "Duplicate order: An order with number '$orderNumber' already exists for this tenant."
+    }
+  )
+  $alreadyApplied = $duplicate -or (
+    -not $parseError -and $kind -eq 'update' -and $responseText -match '(?i)order is already loaded|order (?:has )?already been updated'
+  )
+  $sent = $accepted -and ([string]::IsNullOrWhiteSpace($responseStatus) -or $responseStatus -eq 'synced')
+  $wrappedRetry = $responseText -match '(?i)too many requests|error code:\s*(?:408|429|5\d\d)\b|internal server error|timed? out|temporar(?:y|ily) unavailable'
+  $retryable = ($parseError -and $http -ge 200 -and $http -lt 300) -or $http -eq 0 -or $http -in @(401, 403, 408, 429) -or $http -ge 500 -or ($http -ge 300 -and $http -lt 400) -or $wrappedRetry
+  $rejected = -not $sent -and -not $alreadyApplied -and -not $retryable
+  $stateCode = if ($alreadyApplied) { 'X80' } elseif ($sent) { 'X90' } elseif ($rejected) { 'X40' } else { 'X00' }
+  $status = if ($duplicate) { 'duplicate' }
+    elseif ($alreadyApplied) { 'already_applied' }
+    elseif ($parseError) { 'invalid_response' }
+    elseif (-not [string]::IsNullOrWhiteSpace($responseStatus)) { $responseStatus }
+    elseif ($rejected) { 'rejected' }
+    else { 'pending' }
+  $message = if ($null -ne $response.data -and $response.data.PSObject.Properties['message']) { "$($response.data.message)" } else { '' }
+  $errorMessage = if ($stateCode -in @('X80', 'X90')) { '' }
+    elseif ($parseError) { "$parseError" }
+    elseif (-not [string]::IsNullOrWhiteSpace($message)) { $message }
+    else { $responseText }
+  [pscustomobject]@{ http = $http; state_code = $stateCode; status = $status; error_code = $errorCode; error = $errorMessage }
+}
+
 function Send-CrossroadsDelivery(
   [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$baseUrl,
   $clientId, $clientSecret, $cacheDir = (Join-Path $PWD 'cache'),
@@ -347,61 +396,21 @@ function Send-CrossroadsDelivery(
       $response = Invoke-CrossroadsRequest -BaseUrl $baseUrl -Path $item.data.path `
         -Body (Get-RequestJson $item.data) -RawJson -Token $token -Tenant $item.data.tenant `
         -DestinationTenant $item.data.destination_tenant -AllowWrite
-      $http = if ($null -eq $response.http) { 0 } else { [int]$response.http }
-      $responseText = if ($null -eq $response.data) { '' } else { ConvertTo-Json -InputObject $response.data -Depth 12 -Compress }
-      $responseStatus = if ($null -ne $response.data -and $response.data.PSObject.Properties['status']) { "$($response.data.status)" } else { '' }
-      $errorCode = $response.data
-      foreach ($field in @('log', 'detail', 'error')) {
-        $errorCode = if ($null -ne $errorCode -and $errorCode.PSObject.Properties[$field]) { $errorCode.$field } else { $null }
-      }
-      $accepted = $http -ge 200 -and $http -lt 300
-      $duplicate = $item.data.kind -eq 'create' -and ($accepted -or $http -eq 422) -and $(
-        if ($errorCode) { $errorCode -eq 'request.order_already_exists' }
-        else {
-          $http -eq 422 -and $null -ne $response.data -and $response.data.PSObject.Properties['detail'] -and
-          $response.data.detail -ceq "Duplicate order: An order with number '$($item.data.order_number)' already exists for this tenant."
-        }
-      )
-      $alreadyApplied = $duplicate -or (
-        $item.data.kind -eq 'update' -and $responseText -match '(?i)order is already loaded|order (?:has )?already been updated'
-      )
-      $sent = $accepted -and ([string]::IsNullOrWhiteSpace($responseStatus) -or $responseStatus -eq 'synced')
-      $wrappedRetry = $responseText -match '(?i)too many requests|error code:\s*(?:408|429|5\d\d)\b|internal server error|timed? out|temporar(?:y|ily) unavailable'
-      $retryable = $http -eq 0 -or $http -in @(401, 403, 408, 429) -or $http -ge 500 -or ($http -ge 300 -and $http -lt 400) -or $wrappedRetry
-      $rejected = -not $sent -and -not $alreadyApplied -and -not $retryable
-      $stateCode = if ($alreadyApplied) { 'X80' } elseif ($sent) { 'X90' } elseif ($rejected) { 'X40' } else { 'X00' }
-      $status = if ($duplicate) {
-        'duplicate'
-      }
-      elseif ($alreadyApplied) {
-        'already_applied'
-      }
-      elseif (-not [string]::IsNullOrWhiteSpace($responseStatus)) {
-        $responseStatus
-      }
-      elseif ($rejected) {
-        'rejected'
-      }
-      else {
-        'pending'
-      }
-      $message = if ($null -ne $response.data -and $response.data.PSObject.Properties['message']) { "$($response.data.message)" } else { '' }
-      $errorMessage = if ($stateCode -in @('X80', 'X90')) { '' } elseif (-not [string]::IsNullOrWhiteSpace($message)) { $message } else { $responseText }
-
-      Set-DeliveryResult $item $stateCode $http $status $response.data $index
-      if ($item.data.kind -eq 'create' -and $stateCode -eq 'X90') { $created = $true }
-      $blocked = $stateCode -eq 'X00'
-      $synced = $stateCode -in @('X80', 'X90')
+      $result = Get-DeliveryResponse $response $item.data.kind $item.data.order_number
+      Set-DeliveryResult $item $result.state_code $result.http $result.status $response.data $index
+      if ($item.data.kind -eq 'create' -and $result.state_code -eq 'X90') { $created = $true }
+      $blocked = $result.state_code -eq 'X00'
+      $synced = $result.state_code -in @('X80', 'X90')
       [pscustomobject]@{
         order_number = $item.data.order_number
         kind = $item.data.kind
-        http = $http
+        http = $result.http
         ok = $synced
         synced = $synced
-        state = $StateNames[$stateCode]
-        status = $status
-        error_code = $errorCode
-        error = $errorMessage
+        state = $StateNames[$result.state_code]
+        status = $result.status
+        error_code = $result.error_code
+        error = $result.error
       }
     }
   }

@@ -39,6 +39,8 @@ Create volumes retain half-even integer rounding. BOL and drop quantities allow 
 
 Each complete envelope contains `order_number`, `updated_date`, `progress`, `hold`, and a `requests` array of `kind`, `path`, `message_key`, and `payload_json`. The payload is finished JSON text, not an object to rebuild. Include every current request for an order: staging supersedes obsolete pending messages. Do not feed partial status-only envelopes into delivery.
 
+Supply one latest snapshot per order in each batch. Add rejects repeated order numbers before staging changes. A fresh successful create currently covers the accompanying update; the adapter must put all of that update's relevant fields in its create. Duplicate-create reconciliation does not skip the update.
+
 URL, tenant pair, order, and logical request identify receipts. Hashes cover the base URL, tenant pair, path, and exact UTF-8 payload text, not the source update timestamp. Latest terminal receipts suppress replay; pending requests retry in sequence. A transient failure blocks later requests for that order only. Request files are replaced atomically, and receipts are saved before pending files are removed.
 
 Old object-format receipts and pending messages remain readable. Receipt lookup also recognizes compact JSON equivalents, so removing numeric padding does not resend successful requests. Only the latest receipt for each logical request is indexed. Old pending messages retain their queued representation until superseded or resolved. New messages are stored and sent unchanged through `CrossroadsClient -RawJson`. Terminal receipts age out under the existing retention rule, and pending messages remain until resolved.
@@ -80,3 +82,5 @@ The sender uses `/auth/token` with the password grant and the supplied client ID
 Run one writer per cache directory. Use persistent storage, not a disposable runner workspace without a persistence step. The caller stages a complete snapshot before advancing the cursor and makes both durable together. A crash after receiver acceptance but before receipt persistence can cause a repeat; this is at-least-once retry behavior, not exactly-once delivery. Explicit receiver rejections are retained as X40, not reported as successful delivery. Source changes not captured by your query cannot be recovered by the delivery queue.
 
 The sender classifies Crossroads responses and preserves their error details. It recognizes specific duplicate-create and already-applied responses; it does not treat every HTTP 200 or 422 as successful. Processing is serial per order. No background service is installed.
+
+Malformed successful responses reported by the client stay pending as `invalid_response`, retaining the actual HTTP code and raw response body. A protocol parsing error is not proof of delivery. Non-2xx responses retain their HTTP retry/rejection policy.

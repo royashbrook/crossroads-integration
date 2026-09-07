@@ -22,6 +22,14 @@ Describe 'Receive source data' {
     Should -Invoke Get-CrossroadsTMWData -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $From -eq [datetime]'2026-01-01T11:55:00' -and $null -eq $Through }
   }
 
+  It 'loads the cache index only once while receiving' {
+    Mock Get-DeliveryIndex -ModuleName CrossroadsIntegration {
+      [pscustomobject]@{legacy=@{}; terminal=@{}; pending_by_hash=@{}; pending=[Collections.Generic.List[object]]::new(); receipts=@{}; old_format=$false}
+    }
+    $null = Receive-CrossroadsTMWData @config
+    Should -Invoke Get-DeliveryIndex -ModuleName CrossroadsIntegration -Times 1 -Exactly
+  }
+
   It 'leaves first-run defaults to SQL and forwards source settings' {
     $null = Receive-CrossroadsTMWData @config -Division DIV -ConnectionString test -SqlFile custom.sql
     Should -Invoke Get-CrossroadsTMWData -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter {
@@ -45,15 +53,15 @@ Describe 'Receive source data' {
 
   It 'does not stage or advance after a source failure' {
     Mock Get-CrossroadsTMWData -ModuleName CrossroadsIntegration { throw 'source failed' }
-    Mock Add-CrossroadsDelivery -ModuleName CrossroadsIntegration {}
+    Mock Add-Delivery -ModuleName CrossroadsIntegration {}
     Mock Set-CrossroadsDeliveryCursor -ModuleName CrossroadsIntegration {}
     { Receive-CrossroadsTMWData @config } | Should -Throw '*source failed*'
-    Should -Invoke Add-CrossroadsDelivery -ModuleName CrossroadsIntegration -Times 0
+    Should -Invoke Add-Delivery -ModuleName CrossroadsIntegration -Times 0
     Should -Invoke Set-CrossroadsDeliveryCursor -ModuleName CrossroadsIntegration -Times 0
   }
 
   It 'does not advance after a staging failure' {
-    Mock Add-CrossroadsDelivery -ModuleName CrossroadsIntegration { throw 'staging failed' }
+    Mock Add-Delivery -ModuleName CrossroadsIntegration { throw 'staging failed' }
     Mock Set-CrossroadsDeliveryCursor -ModuleName CrossroadsIntegration {}
     { Receive-CrossroadsTMWData @config } | Should -Throw '*staging failed*'
     Should -Invoke Set-CrossroadsDeliveryCursor -ModuleName CrossroadsIntegration -Times 0

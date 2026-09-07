@@ -30,6 +30,7 @@
     'CrossroadsIntegration.psd1'
     'CrossroadsIntegration.psm1'
     'Delivery.ps1'
+    'Adapters/TMW/TMW.ps1'
     'Adapters/TMW/Get-Source.sql'
     'Adapters/TMW/Get-Requests.sql'
     'README.md'
