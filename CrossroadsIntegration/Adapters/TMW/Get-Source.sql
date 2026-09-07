@@ -1,6 +1,12 @@
 set transaction isolation level read uncommitted
 set deadlock_priority -10
 set nocount on
+declare @ReadThrough datetime = coalesce(convert(datetime, @Through), getdate())
+declare @ReadFrom datetime = coalesce(convert(datetime, @From), dateadd(minute, -55, @ReadThrough))
+if @ReadThrough <= @ReadFrom
+begin
+	;throw 50000, 'Through must be after From.', 1;
+end
 declare @Source nvarchar(max)
 
 ;with changed as (
@@ -26,8 +32,8 @@ declare @Source nvarchar(max)
 	where
 		o.ord_billto = @BillTo
 		and (@Division is null or o.ord_revtype1 = @Division)
-		and a.updated_date >= @From
-		and a.updated_date < @Through
+		and a.updated_date >= @ReadFrom
+		and a.updated_date < @ReadThrough
 )
 select @Source = (select
 	  [order_number]    = o.ord_hdrnumber
