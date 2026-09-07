@@ -346,7 +346,7 @@ function Get-DeliveryResponse($response, $kind, $orderNumber) {
   )
   $sent = $accepted -and ([string]::IsNullOrWhiteSpace($responseStatus) -or $responseStatus -eq 'synced')
   $wrappedRetry = $responseText -match '(?i)too many requests|error code:\s*(?:408|429|5\d\d)\b|internal server error|timed? out|temporar(?:y|ily) unavailable'
-  $retryable = $parseError -or $http -eq 0 -or $http -in @(401, 403, 408, 429) -or $http -ge 500 -or ($http -ge 300 -and $http -lt 400) -or $wrappedRetry
+  $retryable = ($parseError -and $http -ge 200 -and $http -lt 300) -or $http -eq 0 -or $http -in @(401, 403, 408, 429) -or $http -ge 500 -or ($http -ge 300 -and $http -lt 400) -or $wrappedRetry
   $rejected = -not $sent -and -not $alreadyApplied -and -not $retryable
   $stateCode = if ($alreadyApplied) { 'X80' } elseif ($sent) { 'X90' } elseif ($rejected) { 'X40' } else { 'X00' }
   $status = if ($duplicate) { 'duplicate' }

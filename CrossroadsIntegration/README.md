@@ -83,4 +83,4 @@ Run one writer per cache directory. Use persistent storage, not a disposable run
 
 The sender classifies Crossroads responses and preserves their error details. It recognizes specific duplicate-create and already-applied responses; it does not treat every HTTP 200 or 422 as successful. Processing is serial per order. No background service is installed.
 
-Malformed JSON reported by the client stays pending as `invalid_response`, retaining the actual HTTP code and raw response body. A protocol parsing error is not proof of delivery or a permanent rejection.
+Malformed successful responses reported by the client stay pending as `invalid_response`, retaining the actual HTTP code and raw response body. A protocol parsing error is not proof of delivery. Non-2xx responses retain their HTTP retry/rejection policy.

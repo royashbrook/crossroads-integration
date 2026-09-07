@@ -59,6 +59,17 @@ Describe 'Delivery boundaries' {
     }
   }
 
+  It 'retains HTTP error classification for non-JSON bodies' {
+    & $module {
+      foreach ($http in 400,404,422) {
+        (Get-DeliveryResponse ([pscustomobject]@{http=$http;data='invalid request';parse_error='Invalid JSON'}) update TEST1).state_code | Should -Be X40
+      }
+      foreach ($http in 401,403,429,503) {
+        (Get-DeliveryResponse ([pscustomobject]@{http=$http;data='unavailable';parse_error='Invalid JSON'}) update TEST1).state_code | Should -Be X00
+      }
+    }
+  }
+
   It 'still sends update after a duplicate create' {
     Mock Get-CrossroadsToken -ModuleName CrossroadsIntegration { 'fake' }
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
