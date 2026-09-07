@@ -16,6 +16,7 @@
     'Get-CrossroadsSqlData'
     'Get-CrossroadsTMWData'
     'Receive-CrossroadsTMWData'
+    'Get-CrossroadsDeliverySummary'
     'Initialize-CrossroadsDelivery'
     'Get-CrossroadsDeliveryCursor'
     'Set-CrossroadsDeliveryCursor'

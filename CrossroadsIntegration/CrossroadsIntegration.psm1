@@ -98,4 +98,4 @@ function Receive-CrossroadsTMWData {
   }
 }
 
-Export-ModuleMember -Function Get-CrossroadsSqlData,Get-CrossroadsTMWData,Receive-CrossroadsTMWData,Initialize-CrossroadsDelivery,Get-CrossroadsDeliveryCursor,Set-CrossroadsDeliveryCursor,Add-CrossroadsDelivery,Send-CrossroadsDelivery
+Export-ModuleMember -Function Get-CrossroadsSqlData,Get-CrossroadsTMWData,Receive-CrossroadsTMWData,Get-CrossroadsDeliverySummary,Initialize-CrossroadsDelivery,Get-CrossroadsDeliveryCursor,Set-CrossroadsDeliveryCursor,Add-CrossroadsDelivery,Send-CrossroadsDelivery
