@@ -15,6 +15,7 @@
   FunctionsToExport = @(
     'Get-CrossroadsSqlData'
     'Get-CrossroadsTMWData'
+    'Receive-CrossroadsTMWData'
     'Initialize-CrossroadsDelivery'
     'Get-CrossroadsDeliveryCursor'
     'Set-CrossroadsDeliveryCursor'

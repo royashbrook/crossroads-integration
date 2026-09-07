@@ -51,15 +51,15 @@ function Get-CrossroadsTMWData {
   param(
     [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$BillTo,
     [string]$Division,
-    [Parameter(Mandatory)] [datetime]$From,
-    [Parameter(Mandatory)] [datetime]$Through,
+    [Nullable[datetime]]$From,
+    [Nullable[datetime]]$Through,
     [string]$ConnectionString = $env:CONNECTION_STRING,
     [string[]]$SqlFile = @(
       (Join-Path $PSScriptRoot 'Adapters/TMW/Get-Source.sql')
       (Join-Path $PSScriptRoot 'Adapters/TMW/Get-Requests.sql')
     )
   )
-  if ($Through -le $From) { throw 'Through must be after From.' }
+  if ($null -ne $From -and $null -ne $Through -and $Through -le $From) { throw 'Through must be after From.' }
   $parameters = @{ BillTo = $BillTo; Division = if ($Division) { $Division } else { $null }; From = $From; Through = $Through }
   foreach ($order in @(Get-CrossroadsSqlData -SqlFile $SqlFile -ConnectionString $ConnectionString -Parameters $parameters)) {
     foreach ($request in $order.requests) {
@@ -69,4 +69,33 @@ function Get-CrossroadsTMWData {
   }
 }
 
-Export-ModuleMember -Function Get-CrossroadsSqlData,Get-CrossroadsTMWData,Initialize-CrossroadsDelivery,Get-CrossroadsDeliveryCursor,Set-CrossroadsDeliveryCursor,Add-CrossroadsDelivery,Send-CrossroadsDelivery
+function Receive-CrossroadsTMWData {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$BillTo,
+    [string]$Division,
+    [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$BaseUrl,
+    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$Tenant,
+    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$DestinationTenant,
+    [Nullable[datetime]]$From,
+    [Nullable[datetime]]$Through,
+    [string]$ConnectionString = $env:CONNECTION_STRING,
+    [string[]]$SqlFile,
+    [string]$CacheDir = (Join-Path $PWD 'cache')
+  )
+  $null = Initialize-CrossroadsDelivery $CacheDir
+  $cursor = Get-CrossroadsDeliveryCursor $CacheDir
+  if ($null -eq $From -and $null -ne $cursor) { $From = $cursor.AddMinutes(-5) }
+  $source = @{ BillTo = $BillTo; Division = $Division; From = $From; Through = $Through; ConnectionString = $ConnectionString }
+  if ($SqlFile) { $source.SqlFile = $SqlFile }
+  $orders = @(Get-CrossroadsTMWData @source)
+  $staged = @(Add-CrossroadsDelivery -Orders $orders -BaseUrl $BaseUrl -Tenant $Tenant -DestinationTenant $DestinationTenant -CacheDir $CacheDir -Persist $true)
+  if ($orders.Count -gt 0) {
+    $null = Set-CrossroadsDeliveryCursor -Current $cursor -Rows $orders -CacheDir $CacheDir
+  }
+  foreach ($item in $staged.Where({$_.data.kind -eq 'hold'})) {
+    [pscustomobject]@{ order_number = $item.data.order_number; kind = 'hold'; http = $null; state = 'rejected'; status = 'held'; error = $item.data.response.message }
+  }
+}
+
+Export-ModuleMember -Function Get-CrossroadsSqlData,Get-CrossroadsTMWData,Receive-CrossroadsTMWData,Initialize-CrossroadsDelivery,Get-CrossroadsDeliveryCursor,Set-CrossroadsDeliveryCursor,Add-CrossroadsDelivery,Send-CrossroadsDelivery

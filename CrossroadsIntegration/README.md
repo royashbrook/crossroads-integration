@@ -4,6 +4,19 @@ Unofficial PowerShell integration module for the [Gravitate Crossroads Integrati
 
 ## Source
 
+`Receive-CrossroadsTMWData` owns cache cleanup, cursor lookup, source retrieval, persistent staging and cursor advancement. It does not send HTTP requests. It returns newly staged local holds as result rows; normal queued requests are reported by Send. An empty source leaves the cursor and retained pending work intact.
+
+```powershell
+$delivery = @{ BaseUrl = $baseUrl; Tenant = $tenant; DestinationTenant = $destinationTenant }
+$results = @(Receive-CrossroadsTMWData -BillTo $billto -Division $division -ConnectionString $connectionString @delivery)
+$results += @(Send-CrossroadsDelivery -ClientId $clientId -ClientSecret $clientSecret @delivery)
+$results | Sort-Object state,order_number,kind | Format-Table order_number,kind,http,state,status,error
+```
+
+Receive uses the cursor minus five minutes unless `-From` is supplied. In the bundled SQL batch, a missing `-Through` becomes the database's `getdate()` once, and a missing `-From` becomes 55 minutes before that upper bound. This uses one database call, not a separate clock query. Both dates can be overridden. Custom SQL receives nullable `From`/`Through` parameters and must resolve defaults itself, or callers must supply explicit dates. Only a successfully staged nonempty read advances the cursor, using the maximum source update timestamp. No-data runs must still call Send.
+
+The read-only getter never reads or writes a cursor. Its omitted date parameters use the same SQL defaults. For manual control or a dry run, use the lower-level commands below.
+
 `Get-CrossroadsTMWData` returns complete request envelopes from SQL. `Get-Source.sql` captures source rows once; `Get-Requests.sql` groups and prepares the payloads in the same batch. Billto, optional division, and date range are SQL parameters. Override `-SqlFile` with one or more SQL files returning the same envelope contract. `Get-CrossroadsSqlData` also accepts any one-column SQL JSON query directly. Other systems can build these envelopes without the TMW adapter.
 
 ```powershell
@@ -36,13 +49,13 @@ Add-CrossroadsDelivery and Send-CrossroadsDelivery require a nonblank BaseUrl. I
 
 Use a separate cache directory per feed/source/tenant pair. Delivery filters tenant pairs, but a cursor belongs to one source selection, not an arbitrary mix of customers. Keep staging, cursor advancement, sends, and persistence under one serialized job. Pending files do not expire; terminal receipts expire after one day. Helpers retain the existing filename and hash formats.
 
-`Get-CrossroadsDeliveryCursor` reads the last staged source watermark. `Set-CrossroadsDeliveryCursor` advances it after all returned rows are staged. The caller owns database clock, overlap, first-run range, logs, scheduling, and publishing cache state. No-data runs must still send existing pending requests.
+`Get-CrossroadsDeliveryCursor` reads the last staged source watermark. `Set-CrossroadsDeliveryCursor` advances it after all returned rows are staged. Receive coordinates these for the TMW adapter. Callers using the lower-level commands must preserve that ordering themselves. The caller owns logs, scheduling and publishing cache state.
 
 ## Runtime
 
 PowerShell 7.5+, CrossroadsClient 1.0.3+, and Clear-Files. The SQL reader uses System.Data.SqlClient supplied with the PowerShell runtime. SQL Server integration has been exercised on Windows; offline package and delivery tests run on Windows and Linux. Driver replacement is not part of this module. Provide a connection string suitable for your server and platform; credentials are never bundled.
 
-Import the manifest to check required modules and expose the seven public commands. The release workflow copies only its `FileList` into the package. Settings, credentials, cache, examples and tests stay outside it.
+Import the manifest to check required modules and expose the eight public commands. The release workflow copies only its `FileList` into the package. Settings, credentials, cache, examples and tests stay outside it.
 
 Commands emit pipeline objects, not a guaranteed array object. Wrap calls in `@()` when a caller needs an empty array and a stable Count. The SQL reader joins every FOR JSON chunk before parsing, preserves UTC strings with `-DateKind String`, and rejects null chunks, malformed output, and extra result sets.
 
