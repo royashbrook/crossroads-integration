@@ -55,7 +55,19 @@ Use a separate cache directory per feed/source/tenant pair. Delivery filters ten
 
 PowerShell 7.5+, CrossroadsClient 1.0.3+, and Clear-Files. The SQL reader uses System.Data.SqlClient supplied with the PowerShell runtime. SQL Server integration has been exercised on Windows; offline package and delivery tests run on Windows and Linux. Driver replacement is not part of this module. Provide a connection string suitable for your server and platform; credentials are never bundled.
 
-Import the manifest to check required modules and expose the eight public commands. The release workflow copies only its `FileList` into the package. Settings, credentials, cache, examples and tests stay outside it.
+Import the manifest to check required modules and expose the nine public commands. The release workflow copies only its `FileList` into the package. Settings, credentials, cache, examples and tests stay outside it.
+
+### Cache summary
+
+```powershell
+Get-CrossroadsDeliverySummary | Format-List
+```
+
+Call after Receive/Send, even when no results were returned. This read-only inventory uses one directory listing, not payload contents, and does not create a missing cache directory. Use `-CacheDir` for an explicit location; otherwise it uses `./cache` beneath the caller's current directory.
+
+Pending, Rejected, Reconciled and Sent count request files, not orders. Rejected includes local holds; unchanged rejected requests are not retried automatically. Reconciled means already applied. Sent also includes requests marked not required. Zero pending does not mean every request was delivered. TotalFiles and SizeMB include all top-level files, including cursor and unrecognized files; subdirectories are excluded. SizeMB uses 1,048,576 bytes per MB.
+
+OldestPendingSourceUpdate and Cursor come from filename timestamps, not filesystem times changed by checkout. They remain in the adapter's source time convention (database-local for TMW); oldest pending source update is not first failure time. A quiet source can leave the cursor unchanged normally. Compare successive summaries to spot growing pending work or cache size; this is an inventory, not an automatic health verdict. Terminal receipts follow normal cleanup; pending requests do not expire.
 
 Commands emit pipeline objects, not a guaranteed array object. Wrap calls in `@()` when a caller needs an empty array and a stable Count. The SQL reader joins every FOR JSON chunk before parsing, preserves UTC strings with `-DateKind String`, and rejects null chunks, malformed output, and extra result sets.
 

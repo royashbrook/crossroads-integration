@@ -152,6 +152,35 @@ function New-DeliveryItem($order, $request, $hash, $messageKey, $baseUrl, $cache
   [pscustomobject]@{ file = $file; data = $data }
 }
 
+function Get-CrossroadsDeliverySummary($cacheDir = (Join-Path $PWD 'cache')) {
+  $files = @(if (Test-Path -LiteralPath $cacheDir) { Get-ChildItem -LiteralPath $cacheDir -File -Force -ErrorAction Stop })
+  $counts = @{ X00 = 0; X40 = 0; X80 = 0; X90 = 0 }
+  $bytes = 0L
+  $oldest = $null
+  $cursor = $null
+  foreach ($file in $files) {
+    $bytes += $file.Length
+    if ($file.Name -match '^(\d{8}T\d{9})\..+\.S\d+\.R\d+\.(X00|X40|X80|X90)\.[0-9a-f]{64}\.json$') {
+      $stamp, $state = $Matches[1], $Matches[2]
+      $counts[$state]++
+      if ($state -eq 'X00' -and ($null -eq $oldest -or $stamp -lt $oldest)) { $oldest = $stamp }
+    }
+    elseif ($file.Name -match '^(\d{8}T\d{9})\.cursor$') {
+      if ($null -eq $cursor -or $Matches[1] -gt $cursor) { $cursor = $Matches[1] }
+    }
+  }
+  [pscustomobject][ordered]@{
+    Pending = $counts.X00
+    Rejected = $counts.X40
+    Reconciled = $counts.X80
+    Sent = $counts.X90
+    TotalFiles = $files.Count
+    SizeMB = [math]::Round($bytes / 1MB, 2)
+    OldestPendingSourceUpdate = if ($oldest) { [datetime]::ParseExact($oldest, 'yyyyMMddTHHmmssfff', [Globalization.CultureInfo]::InvariantCulture) } else { $null }
+    Cursor = if ($cursor) { [datetime]::ParseExact($cursor, 'yyyyMMddTHHmmssfff', [Globalization.CultureInfo]::InvariantCulture) } else { $null }
+  }
+}
+
 function Initialize-CrossroadsDelivery($cacheDir = (Join-Path $PWD 'cache')) {
   Import-Module Clear-Files
   New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null

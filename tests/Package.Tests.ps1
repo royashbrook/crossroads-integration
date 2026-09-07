@@ -18,7 +18,7 @@ Describe 'Public package' {
       param($Path)
       $ErrorActionPreference = 'Stop'
       $module = Import-Module $Path -Force -PassThru
-      if ($module.ExportedFunctions.Count -ne 8) { throw 'Unexpected exports.' }
+      if ($module.ExportedFunctions.Count -ne 9) { throw 'Unexpected exports.' }
       $sql = & $module {
         Set-Item Function:script:Get-CrossroadsSqlData { param($SqlFile) [pscustomobject]@{ sql = $SqlFile; requests = @() } }
         (Get-CrossroadsTMWData -BillTo ACCOUNT -From '2026-01-01' -Through '2026-01-02').sql
