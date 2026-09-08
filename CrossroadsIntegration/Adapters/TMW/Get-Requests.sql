@@ -111,15 +111,27 @@
 	from rows r
 	cross apply openjson(r.tank_allocations) with (tank_id varchar(20), quantity float) a
 	where a.quantity > 0
-), drop_readiness as (
+), tank_readiness as (
 	select r.seq, [ready] = case
-		when try_convert(float, r.net_volume) > 0 and try_convert(datetimeoffset, nullif(trim(r.drop_depart), '')) is not null
-			and count(a.seq) > 0 and count(a.seq) = count(nullif(trim(a.tank_id), ''))
+		when count(a.seq) > 0 and count(a.seq) = count(nullif(trim(a.tank_id), ''))
 			and (count(a.seq) = 1 or abs(sum(a.quantity) - try_convert(float, r.net_volume)) < 0.000001)
 		then 1 else 0 end
 	from rows r
 	left join allocations a on a.seq = r.seq
 	group by r.seq, r.net_volume, r.drop_depart
+), drop_readiness as (
+	select seq, [ready] = case when try_convert(float, net_volume) > 0
+		and try_convert(datetimeoffset, nullif(trim(drop_depart), '')) is not null then 1 else 0 end
+	from rows
+), drop_allocations as (
+	select r.seq, a.tank_id, [quantity] = case when (select count(*) from allocations where seq = r.seq) = 1 then convert(float, r.net_volume) else a.quantity end
+	from rows r
+	join tank_readiness t on t.seq = r.seq and t.ready = 1
+	join allocations a on a.seq = r.seq
+	union all
+	select r.seq, null, try_convert(float, r.net_volume)
+	from rows r
+	join tank_readiness t on t.seq = r.seq and t.ready = 0
 ), payloads as (
 	select
 		  s.*
@@ -216,11 +228,12 @@ select
 					, [details] = json_query((
 						select
 							  [product]        = json_query(k.product_key)
-							, [quantity]       = convert(decimal(38, 16), case when (select count(*) from allocations where seq = k.seq) = 1 then convert(float, k.net_volume) else a.quantity end)
+							, [quantity]       = convert(decimal(38, 16), a.quantity)
 							, [post_drop_time] = k.drop_depart
-							, [tank]           = json_query((select trim(k.site_id) as source_id, a.tank_id for json path, without_array_wrapper))
+							, [tank]           = json_query((select trim(k.site_id) as source_id, a.tank_id,
+								case when a.tank_id is null then trim(k.product_id) end as product_source_id for json path, without_array_wrapper))
 						from keys k
-						join allocations a on a.seq = k.seq
+						join drop_allocations a on a.seq = k.seq
 						where k.order_number = p.order_number and k.site_id = s.site_id
 						order by k.seq, a.tank_id
 						for json path, include_null_values
@@ -240,6 +253,7 @@ select
 					  [order]         = json_query(p.order_key)
 					, [progress_status] = p.progress
 					, [delivery_eta]  = p.delivery_eta
+					, [eta]           = p.delivery_eta
 					, [actual]        = p.actual
 					, [site]          = json_query(case when p.progress in ('driving_to_drop', 'arrived_at_drop', 'dropping', 'completed_drop') then coalesce(d.site_key, f.site_key) end)
 					, [location]      = json_query(case when p.progress not in ('driving_to_drop', 'arrived_at_drop', 'dropping', 'completed_drop') then f.terminal_key end)
@@ -248,7 +262,8 @@ select
 			from keys f
 			outer apply (select top (1) k.site_key from keys k where k.order_number = p.order_number and upper(trim(k.drop_status)) = 'DNE' order by k.drop_depart desc, k.seq) d
 			where f.seq = p.seq and p.base_hold is null and p.progress is not null
-				and try_convert(datetimeoffset, nullif(trim(p.actual), '')) is not null
+				and ((p.progress = 'complete' and try_convert(datetimeoffset, nullif(trim(p.actual), '')) is not null)
+					or (p.progress != 'complete' and try_convert(datetimeoffset, nullif(trim(p.delivery_eta), '')) is not null))
 				and (p.progress != 'complete' or p.completion_hold is null) and upper(trim(p.source_status)) != 'CAN'
 				and (p.progress != 'complete' or not exists (select 1 from rows r join drop_readiness dr on dr.seq = r.seq where r.order_number = p.order_number and dr.ready = 0))
 			union all
