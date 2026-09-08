@@ -41,6 +41,10 @@ Each complete envelope contains `order_number`, `updated_date`, `progress`, `hol
 
 Supply one latest snapshot per order in each batch. Add rejects repeated order numbers before staging changes. A fresh successful create currently covers the accompanying update; the adapter must put all of that update's relevant fields in its create. Duplicate-create reconciliation does not skip the update.
 
+Dependent requests wait for confirmed creation for the same base URL, tenant pair, and order. An explicit `synced` create receipt confirms it. Without that receipt, stranded work uses a read-only `/v1/order/get` lookup with a flat `order_number`. Recovery requires matching origin identities, a nonblank destination order number, and record sync status `synced` (distinct from trip progress). The retained confirmation records GET provenance. A duplicate alone or empty create acknowledgment does not confirm destination creation. Failed confirmation produces one `waiting_for_create` row, without dependent writes.
+
+Completion records the hashes of its snapshot's BOL/drop requests and waits for their latest sent receipts. A rejected detail does not block an independent detail, but does block completion. Required receipts survive cleanup while completion waits. A corrected snapshot refreshes the dependency hashes even when the completion payload itself is unchanged. Older pending completions without this metadata wait for a fresh source snapshot; they are not assumed ready.
+
 URL, tenant pair, order, and logical request identify receipts. Hashes cover the base URL, tenant pair, path, and exact UTF-8 payload text, not the source update timestamp. Latest terminal receipts suppress replay; pending requests retry in sequence. A transient failure blocks later requests for that order only. Request files are replaced atomically, and receipts are saved before pending files are removed.
 
 Old object-format receipts and pending messages remain readable. Receipt lookup also recognizes compact JSON equivalents, so removing numeric padding does not resend successful requests. Only the latest receipt for each logical request is indexed. Old pending messages retain their queued representation until superseded or resolved. New messages are stored and sent unchanged through `CrossroadsClient -RawJson`. Terminal receipts age out under the existing retention rule, and pending messages remain until resolved.
@@ -49,7 +53,15 @@ CacheDir is optional on all delivery/cursor commands. Its default is the absolut
 
 Add-CrossroadsDelivery and Send-CrossroadsDelivery require a nonblank BaseUrl. Invalid values fail at parameter binding, before reading or writing delivery state or requesting a token.
 
-Use a separate cache directory per feed/source/tenant pair. Delivery filters tenant pairs, but a cursor belongs to one source selection, not an arbitrary mix of customers. Keep staging, cursor advancement, sends, and persistence under one serialized job. Pending files do not expire; terminal receipts expire after one day. Helpers retain the existing filename and hash formats.
+Use a separate cache directory per feed/source/tenant pair. Delivery filters tenant pairs, but a cursor belongs to one source selection, not an arbitrary mix of customers. Keep staging, cursor advancement, sends, and persistence under one serialized job. Pending files do not expire; terminal receipts expire after one day except the newest confirmed create receipt per scoped order. That receipt preserves the creation prerequisite across cleanup and later duplicate-create results. Helpers retain the existing filename and hash formats.
+
+### TMW Eligibility
+
+The adapter excludes nonpositive freight and site/product totals that round to zero gallons. An excluded order still returns an empty snapshot with its source timestamp, so staging can retire obsolete pending requests and advance the cursor. Valid freight on the same order remains eligible.
+
+Status requests need an actual event timestamp. Delivery ETA is not repurposed as assignment or terminal-arrival time. The default projection therefore omits early statuses without a source event, while retaining eligible creates and updates.
+
+Delivery allocation slots map through `company_tankdetail.forecast_bucket` to `cmp_tank_id`; the slot number is not the tank ID. A unique, product-compatible tank assignment receives the freight's measured net quantity. Split allocations are sent only when every tank resolves and their quantities reconcile to the measured net total. A site's replace-mode drop is omitted if any positive freight line lacks usable allocation or timing data. No product-based fallback invents a delivered tank. Completion payloads are generated only when required BOL and drop data are eligible.
 
 `Get-CrossroadsDeliveryCursor` reads the last staged source watermark. `Set-CrossroadsDeliveryCursor` advances it after all returned rows are staged. Receive coordinates these for the TMW adapter. Callers using the lower-level commands must preserve that ordering themselves. The caller owns logs, scheduling and publishing cache state.
 

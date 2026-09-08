@@ -1,4 +1,5 @@
 BeforeAll {
+  . (Join-Path $PSScriptRoot 'Confirm-TestCreation.ps1')
   $module = Import-Module (Join-Path $PSScriptRoot '../CrossroadsIntegration/CrossroadsIntegration.psd1') -Force -PassThru
 }
 
@@ -37,6 +38,7 @@ Describe 'Delivery boundaries' {
   }
 
   It 'keeps malformed HTTP success pending with its actual response' {
+    Confirm-TestCreation $cache TEST1 'https://example.invalid'
     Mock Get-CrossroadsToken -ModuleName CrossroadsIntegration { 'fake' }
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       [pscustomobject]@{ http=200; data='accepted'; parse_error='Invalid JSON' }
@@ -71,6 +73,7 @@ Describe 'Delivery boundaries' {
   }
 
   It 'still sends update after a duplicate create' {
+    Confirm-TestCreation $cache TEST1 'https://example.invalid'
     Mock Get-CrossroadsToken -ModuleName CrossroadsIntegration { 'fake' }
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') {

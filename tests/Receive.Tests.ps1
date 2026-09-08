@@ -24,7 +24,7 @@ Describe 'Receive source data' {
 
   It 'loads the cache index only once while receiving' {
     Mock Get-DeliveryIndex -ModuleName CrossroadsIntegration {
-      [pscustomobject]@{legacy=@{}; terminal=@{}; pending_by_hash=@{}; pending=[Collections.Generic.List[object]]::new(); receipts=@{}; old_format=$false}
+      [pscustomobject]@{legacy=@{}; terminal=@{}; pending_by_hash=@{}; pending=[Collections.Generic.List[object]]::new(); receipts=@{}; created=@{}; old_format=$false}
     }
     $null = Receive-CrossroadsTMWData @config
     Should -Invoke Get-DeliveryIndex -ModuleName CrossroadsIntegration -Times 1 -Exactly
