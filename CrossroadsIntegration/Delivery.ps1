@@ -205,14 +205,28 @@ function Initialize-CrossroadsDelivery($cacheDir = (Join-Path $PWD 'cache')) {
 
 function Initialize-Delivery($cacheDir) {
   New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+  $index = Get-DeliveryIndex $cacheDir -Prune
+  $protected = @{}
+  foreach ($item in $index.created.Values) { $protected[$item.file] = $true }
+  $required = @{}
+  foreach ($item in $index.pending) {
+    if (-not $item.data.PSObject.Properties['requires']) { continue }
+    foreach ($hash in @($item.data.requires)) { if ($hash) { $required[$hash] = $true } }
+  }
+  foreach ($item in $index.receipts.Values) {
+    if (@($item.hashes.Where({$required.ContainsKey($_)})).Count) { $protected[$item.file] = $true }
+  }
+  $purge = @(Get-ChildItem $cacheDir -File | Where-Object {
+    ($_.Extension -eq '.cache' -or $_.Name -match '\.X(40|80|90)\.[0-9a-f]{64}\.json$') -and -not $protected.ContainsKey($_.FullName)
+  })
   Push-Location $cacheDir
   try {
-    $null = Clear-Files ([pscustomobject]@{ keepdays = 1; purgefiles = '*.cache,*.X40.*.json,*.X80.*.json,*.R[02-9][0-9].X90.*.json' })
+    if ($purge.Count) { $null = Clear-Files ([pscustomobject]@{ keepdays = 1; purgefiles = $purge.Name -join ',' }) }
   }
   finally {
     Pop-Location
   }
-  Get-DeliveryIndex $cacheDir -Prune
+  if ($purge.Count) { Get-DeliveryIndex $cacheDir -Prune } else { $index }
 }
 
 function Get-CrossroadsDeliveryCursor($cacheDir = (Join-Path $PWD 'cache')) {
@@ -304,16 +318,24 @@ function Add-Delivery($orders, $baseUrl, $cacheDir, $persist, $Tenant, $Destinat
       }
     }
 
+    $requires = @($requests | Where-Object {$_.request.kind -in @('save_bol','save_drop')} | ForEach-Object hash)
     foreach ($requestItem in $requests) {
+      $completion = $requestItem.request.kind -eq 'status' -and $order.progress -eq 'complete'
       $hashes = @($requestItem.hash, $requestItem.prior_hash)
       if (@($hashes.Where({ $index.terminal.ContainsKey($_) -or ($requestItem.request.kind -eq 'create' -and $index.legacy.ContainsKey($_)) })).Count) { continue }
       $pendingHash = $hashes.Where({$index.pending_by_hash.ContainsKey($_)}, 'First')
       if ($pendingHash.Count) {
-        $staged.Add($index.pending_by_hash[$pendingHash[0]])
+        $item = $index.pending_by_hash[$pendingHash[0]]
+        if ($completion -and [datetime]$item.data.source_updated -le $updated) {
+          $item.data | Add-Member requires $requires -Force
+          if ($persist) { Write-DeliveryItem $item.file $item.data }
+        }
+        $staged.Add($item)
         continue
       }
 
       $item = New-DeliveryItem $order $requestItem.request $requestItem.hash $requestItem.key $baseUrl $cacheDir $Tenant $DestinationTenant
+      if ($completion) { $item.data | Add-Member requires $requires }
       if ($persist) { Write-DeliveryItem $item.file $item.data }
       $index.pending_by_hash[$requestItem.hash] = $item
       $index.pending.Add($item)
@@ -393,6 +415,33 @@ function Get-DeliveryResponse($response, $kind, $orderNumber) {
   [pscustomobject]@{ http = $http; state_code = $stateCode; status = $status; error_code = $errorCode; error = $errorMessage }
 }
 
+function Confirm-DestinationCreation($item, $token, $cacheDir, $index) {
+  $data = $item.data
+  $request = [pscustomobject]@{ kind='create'; path='/v1/order/get'; payload=@{order_number="$($data.order_number)"} }
+  $read = Invoke-CrossroadsRequest -BaseUrl $data.base_url -Path $request.path -Body $request.payload `
+    -Token $token -Tenant $data.tenant -DestinationTenant $data.destination_tenant -ReadOnly
+  if ($read.http -lt 200 -or $read.http -ge 300 -or $null -eq $read.data) { return $false }
+  $body = $read.data
+  if (-not $body.PSObject.Properties['status'] -or $body.status -ne 'synced' -or
+      -not $body.PSObject.Properties['origin_order'] -or -not $body.PSObject.Properties['destination_order']) { return $false }
+  $origin = $body.origin_order
+  $destination = $body.destination_order
+  if ($null -eq $origin -or $null -eq $destination -or
+      -not $origin.PSObject.Properties['origin_order_number'] -or
+      -not $destination.PSObject.Properties['origin_order_number'] -or
+      -not $destination.PSObject.Properties['destination_order_number']) { return $false }
+  if ("$($origin.origin_order_number)" -cne "$($data.order_number)" -or
+      "$($destination.origin_order_number)" -cne "$($data.order_number)" -or
+      [string]::IsNullOrWhiteSpace("$($destination.destination_order_number)")) { return $false }
+  $order = [pscustomobject]@{order_number=$data.order_number; updated_date=$data.source_updated; progress='assigned'}
+  $hash = Get-RequestHash $data.base_url $request $data.tenant $data.destination_tenant
+  $proof = New-DeliveryItem $order $request $hash 'creation_confirmation' $data.base_url $cacheDir $data.tenant $data.destination_tenant 'X90' 'synced' `
+    ([pscustomobject]@{verified_by='order_get';destination_order_number=$destination.destination_order_number})
+  Write-DeliveryItem $proof.file $proof.data
+  $index.created[(Get-CreatedKey $data)] = $proof
+  return $true
+}
+
 function Send-CrossroadsDelivery(
   [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$baseUrl,
   $clientId, $clientSecret, $cacheDir = (Join-Path $PWD 'cache'),
@@ -415,6 +464,11 @@ function Send-CrossroadsDelivery(
     $blocked = $false
     $created = $false
     $confirmed = $index.created.ContainsKey((Get-CreatedKey $group.Group[0].data))
+    $creates = @($group.Group.Where({$_.data.kind -eq 'create'}))
+    if (-not $confirmed -and ($creates.Count -eq 0 -or @($creates.Where({$_.data.attempted_at})).Count)) {
+      if (-not $token) { $token = Get-CrossroadsToken -BaseUrl $baseUrl -TokenPath '/auth/token' -ClientId $clientId -ClientSecret $clientSecret -GrantType 'password' }
+      $confirmed = Confirm-DestinationCreation $group.Group[0] $token $cacheDir $index
+    }
     $reported = $false
     foreach ($item in @($group.Group | Sort-Object { if ($_.data.kind -eq 'create') { 0 } else { 1 } }, { $_.data.stage_code }, { $_.data.request_code }, file)) {
       if ($blocked) { continue }
@@ -429,6 +483,20 @@ function Send-CrossroadsDelivery(
         Set-DeliveryResult $item 'X90' $null 'not_required' $null $index
         [pscustomobject]@{ order_number = $item.data.order_number; kind = $item.data.kind; http = $null; ok = $true; synced = $true; state = 'sent'; status = 'not_required'; error = '' }
         continue
+      }
+      if ($item.data.kind -eq 'status' -and $item.data.stage_code -eq 90) {
+        $sent = @{}
+        foreach ($receipt in $index.receipts.Values) {
+          if ($receipt.data.state -ne 'sent') { continue }
+          $sent[$receipt.data.hash] = $true
+          if ($receipt.PSObject.Properties['hashes']) {
+            foreach ($hash in $receipt.hashes) { $sent[$hash] = $true }
+          }
+        }
+        if (-not $item.data.PSObject.Properties['requires'] -or @($item.data.requires.Where({-not $sent.ContainsKey($_)})).Count) {
+          [pscustomobject]@{ order_number=$item.data.order_number; kind='status'; http=$null; ok=$false; synced=$false; state='pending'; status='waiting_for_details'; error='Completion awaits confirmed BOL and drop delivery.' }
+          continue
+        }
       }
 
       if (-not $token) {

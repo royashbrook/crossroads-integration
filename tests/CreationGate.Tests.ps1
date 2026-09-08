@@ -16,15 +16,15 @@ Describe 'Destination creation prerequisite' {
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=200;data=[pscustomobject]@{status='synced'}} }
   }
 
-  It 'waits without network calls when creation has no proof' {
+  It 'waits without writes when readback cannot confirm creation' {
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     foreach ($pass in 1,2) {
       $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
       $result.Count | Should -Be 1
       $result[0].status | Should -Be waiting_for_create
     }
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly
-    Should -Invoke Get-CrossroadsToken -ModuleName CrossroadsIntegration -Times 0 -Exactly
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $AllowWrite }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $ReadOnly }
     @(Get-ChildItem $cache -Filter '*.X00.*.json').Count | Should -Be 1
   }
 
@@ -74,7 +74,7 @@ Describe 'Destination creation prerequisite' {
     $delivery[$field] = $value
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].status | Should -Be waiting_for_create
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $AllowWrite }
   }
 
   It 'keeps empty create acknowledgments unconfirmed' {
@@ -112,5 +112,90 @@ Describe 'Destination creation prerequisite' {
     $null = Set-CrossroadsDeliveryCursor -Rows @($order) -CacheDir $cache
     @(Get-ChildItem $cache -Filter '*.X00.*.json').Count | Should -Be 0
     Get-CrossroadsDeliveryCursor $cache | Should -Be ([datetime]$order.updated_date)
+  }
+
+  It 'recovers expired creation proof from a matching synced destination readback' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
+      if ($ReadOnly) {
+        return [pscustomobject]@{http=200;data=[pscustomobject]@{
+          status='synced';origin_order=[pscustomobject]@{origin_order_number='TEST1'}
+          destination_order=[pscustomobject]@{origin_order_number='TEST1';destination_order_number='DEST1'}
+        }}
+      }
+      [pscustomobject]@{http=200;data=[pscustomobject]@{status='synced'}}
+    }
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].state | Should -Be sent
+    $proof = Get-ChildItem $cache -Filter '*.R10.X90.*.json' | Get-Content -Raw | ConvertFrom-Json
+    $proof.path | Should -Be '/v1/order/get'
+    $proof.response.verified_by | Should -Be order_get
+    foreach ($file in Get-ChildItem $cache -Filter '*.json') { $file.LastWriteTime = (Get-Date).AddDays(-30) }
+    Initialize-CrossroadsDelivery $cache
+    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 1
+    $order.requests[0].payload_json = '{"order":{"order_number":"TEST1"},"actual":"2026-09-08T12:15:00Z"}'
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $ReadOnly -and $Body.order_number -eq 'TEST1' -and -not $Body.ContainsKey('order') -and $Tenant -ceq 'SOURCE' -and $DestinationTenant -ceq 'TARGET' }
+  }
+
+  It 'rejects readback proof with <problem>' -ForEach @(@{problem='wrong_order'},@{problem='no_destination'},@{problem='not_synced'}) {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
+      $body = [pscustomobject]@{
+        status='synced';origin_order=[pscustomobject]@{origin_order_number='TEST1'}
+        destination_order=[pscustomobject]@{origin_order_number='TEST1';destination_order_number='DEST1'}
+      }
+      switch ($problem) {
+        wrong_order { $body.destination_order.origin_order_number='OTHER' }
+        no_destination { $body.destination_order.destination_order_number=$null }
+        not_synced { $body.status='error' }
+      }
+      [pscustomobject]@{http=200;data=$body}
+    }
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].status | Should -Be waiting_for_create
+    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $AllowWrite }
+  }
+
+  It 'retains required receipts and refreshes dependencies when a rejected detail is corrected' {
+    Confirm-TestCreation $cache TEST1 'https://example.invalid'
+    $order.progress = 'complete'
+    $order.requests = @(
+      [pscustomobject]@{kind='save_bol';path='/v1/order/save_bol';message_key='bol:B1';payload_json='{"bol_number":"B1","quantity":100}'}
+      [pscustomobject]@{kind='save_drop';path='/v1/order/save_drop';message_key='drop:S1';payload_json='{"site":"S1","quantity":100}'}
+      [pscustomobject]@{kind='status';path='/v1/order/update_status';message_key='status';payload_json='{"progress_status":"complete"}'}
+    )
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
+      if ($Path -eq '/v1/order/save_bol' -and $Body -match ':100') { return [pscustomobject]@{http=422;data=[pscustomobject]@{detail='mapping missing'}} }
+      [pscustomobject]@{http=200;data=[pscustomobject]@{status='synced'}}
+    }
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
+    $result.status | Should -Be @('rejected','synced','waiting_for_details')
+    foreach ($file in Get-ChildItem $cache -Filter '*.json') { $file.LastWriteTime = (Get-Date).AddDays(-30) }
+    Initialize-CrossroadsDelivery $cache
+    @(Get-ChildItem $cache -Filter '*.R40.X90.*.json').Count | Should -Be 1
+    @(Get-ChildItem $cache -Filter '*.R30.X40.*.json').Count | Should -Be 1
+    $order.requests[0].payload_json = '{"bol_number":"B1","quantity":101}'
+    $order.updated_date = '2026-09-08T12:15:00'
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
+    $result.kind | Should -Be @('save_bol','status')
+    $result.state | Should -Be @('sent','sent')
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $Path -eq '/v1/order/update_status' }
+    Initialize-CrossroadsDelivery $cache
+    @(Get-ChildItem $cache -Filter '*.R40.X90.*.json').Count | Should -Be 0
+  }
+
+  It 'holds an older completion without a recorded dependency snapshot' {
+    Confirm-TestCreation $cache TEST1 'https://example.invalid'
+    $order.progress = 'complete'
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $file = Get-ChildItem $cache -Filter '*.X00.*.json'
+    $data = Get-Content $file -Raw | ConvertFrom-Json
+    $data.PSObject.Properties.Remove('requires')
+    $data | ConvertTo-Json -Depth 64 | Set-Content $file
+    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].status | Should -Be waiting_for_details
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly
   }
 }

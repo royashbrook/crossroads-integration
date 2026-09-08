@@ -119,7 +119,8 @@ Describe 'Crossroads delivery' {
     $second.Count | Should -Be 1
     $second[0].status | Should -Be 'waiting_for_create'
     @(Get-ChildItem $script:cache -Filter '*.X40.*.json').Count | Should -Be 1
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $AllowWrite }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $ReadOnly }
   }
 
   It 'accepts only an explicit duplicate create 422' {
@@ -219,7 +220,7 @@ Describe 'Crossroads delivery' {
     @(Get-ChildItem $script:cache -Filter '*.R20.X90.*.json').Count | Should -Be 0
   }
 
-  It 'continues completion after a rejected BOL' {
+  It 'sends independent drops but holds completion after a rejected BOL' {
     Confirm-TestCreation $script:cache '900002'
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') {
@@ -241,7 +242,8 @@ Describe 'Crossroads delivery' {
     $results.kind | Should -Be @('create', 'update', 'save_bol', 'save_drop', 'status')
     $results.Where({$_.kind -eq 'save_bol'})[0].state | Should -Be 'rejected'
     $results.Where({$_.kind -eq 'save_drop'})[0].state | Should -Be 'sent'
-    $results.Where({$_.kind -eq 'status'})[0].state | Should -Be 'sent'
+    $results.Where({$_.kind -eq 'status'})[0].status | Should -Be 'waiting_for_details'
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $Path -eq '/v1/order/update_status' }
   }
 
   It 'stages changed content after a terminal rejection' {
