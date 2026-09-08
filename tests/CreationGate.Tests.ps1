@@ -50,6 +50,21 @@ Describe 'Destination creation prerequisite' {
     @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].state | Should -Be sent
   }
 
+  It 'expires ordinary sent receipts but keeps creation confirmation' {
+    Confirm-TestCreation $cache TEST1 'https://example.invalid'
+    $order.requests[0].kind = 'update'
+    $order.requests[0].path = '/v1/order/update'
+    $order.requests[0].message_key = 'update'
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
+    $receipts = @(Get-ChildItem $cache -Filter '*.X90.*.json')
+    $receipts.Count | Should -Be 2
+    foreach ($receipt in $receipts) { $receipt.LastWriteTime = (Get-Date).AddDays(-30) }
+    Initialize-CrossroadsDelivery $cache
+    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 1
+    @(Get-ChildItem $cache -Filter '*.R20.X90.*.json').Count | Should -Be 0
+  }
+
   It 'does not borrow confirmation from a different <field>' -ForEach @(
     @{field='BaseUrl';value='https://another.invalid'}
     @{field='Tenant';value='OTHER'}

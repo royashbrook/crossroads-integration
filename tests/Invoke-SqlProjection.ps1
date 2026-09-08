@@ -60,7 +60,7 @@ try {
   }
   if (-not $ready) { throw 'SQL container did not become ready.' }
 
-  $source = ConvertTo-Json -InputObject @($rows) -Compress -EscapeHandling EscapeNonAscii
+  $source = ConvertTo-Json -InputObject @($rows) -Depth 64 -Compress -EscapeHandling EscapeNonAscii
   $sql = Join-Path (Get-Module CrossroadsIntegration).ModuleBase 'Adapters/TMW/Get-Requests.sql'
   $actual = @(Get-CrossroadsSqlData -SqlFile $sql -ConnectionString $connectionString -Parameters @{Source=$source})
   $expected = @(ConvertTo-CrossroadsOrder @($rows))
