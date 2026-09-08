@@ -165,7 +165,7 @@ Describe 'Crossroads delivery' {
     (Get-Content $receipt.FullName -Raw | ConvertFrom-Json).response.detail | Should -Be $Detail
   }
 
-  It 'accepts an already-loaded update as delivered' {
+  It 'does not treat an already-loaded supply rejection as delivered' {
     Confirm-TestCreation $script:cache '900001'
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') {
@@ -188,16 +188,17 @@ Describe 'Crossroads delivery' {
     $results = @(Send-CrossroadsDelivery 'http://localhost:8808' test test $script:cache @delivery)
     $update = $results.Where({$_.kind -eq 'update'})[0]
 
-    $update.synced | Should -BeTrue
-    $update.status | Should -Be 'already_applied'
+    $update.synced | Should -BeFalse
+    $update.status | Should -Be 'error'
     @(Get-ChildItem $script:cache -Filter '*.R20.X00.*.json').Count | Should -Be 0
-    $receipt = @(Get-ChildItem $script:cache -Filter '*.R20.X80.*.json')
+    $receipt = @(Get-ChildItem $script:cache -Filter '*.R20.X40.*.json')
     $receipt.Count | Should -Be 1
-    (Get-Content $receipt[0].FullName -Raw | ConvertFrom-Json).state | Should -Be 'reconciled'
-    @(Add-CrossroadsDelivery $order 'http://localhost:8808' $script:cache $true @delivery).Count | Should -Be 0
+    (Get-Content $receipt[0].FullName -Raw | ConvertFrom-Json).state | Should -Be 'rejected'
+    $results[-1].status | Should -Be waiting_for_update
+    @(Add-CrossroadsDelivery $order 'http://localhost:8808' $script:cache $true @delivery).Count | Should -Be 1
   }
 
-  It 'records update rejections without blocking later requests' {
+  It 'records update rejections and holds dependent requests' {
     Confirm-TestCreation $script:cache '900001'
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') {
@@ -215,7 +216,8 @@ Describe 'Crossroads delivery' {
     $update.state | Should -Be 'rejected'
     $results.Count | Should -Be 3
     @(Get-ChildItem $script:cache -Filter '*.R20.X40.*.json').Count | Should -Be 1
-    @(Get-ChildItem $script:cache -Filter '*.R90.X40.*.json').Count | Should -Be 1
+    @(Get-ChildItem $script:cache -Filter '*.R90.X00.*.json').Count | Should -Be 1
+    $results[-1].status | Should -Be waiting_for_update
     @(Get-ChildItem $script:cache -Filter '*.R20.X80.*.json').Count | Should -Be 0
     @(Get-ChildItem $script:cache -Filter '*.R20.X90.*.json').Count | Should -Be 0
   }
@@ -227,7 +229,7 @@ Describe 'Crossroads delivery' {
         return [pscustomobject]@{ http = 422; data = [pscustomobject]@{ detail = "Duplicate order: An order with number '$(($Body | ConvertFrom-Json).origin_order_number)' already exists for this tenant." } }
       }
       if ($Path -eq '/v1/order/update') {
-        return [pscustomobject]@{ http = 200; data = [pscustomobject]@{ status = 'error'; message = 'order is already loaded' } }
+        return [pscustomobject]@{ http = 200; data = [pscustomobject]@{ status = 'synced' } }
       }
       if ($Path -eq '/v1/order/save_bol') {
         return [pscustomobject]@{ http = 422; data = [pscustomobject]@{ detail = 'tank mapping missing' } }

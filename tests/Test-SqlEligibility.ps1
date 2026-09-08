@@ -47,6 +47,12 @@ function Test-SqlEligibility($connectionString, $sql, $fixture) {
   if ($result.requests.kind -contains 'save_drop') { throw 'Replace-mode drop silently omitted an invalid line at the same site.' }
   $assigned = $fixture[0] | Select-Object *
   $result = (Get-TestProjection @($assigned))[0]
-  if ($result.requests.kind -contains 'status' -or $result.requests.kind -notcontains 'create') { throw 'Assignment without an event timestamp was sent or hid its create.' }
+  $status = (Get-Body $result status)[0]
+  if ($status.delivery_eta -ne $assigned.delivery_eta -or $status.eta -ne $assigned.delivery_eta -or $null -ne $status.actual) { throw 'Assignment estimate missing or presented as an actual event.' }
+  foreach ($eta in '', '   ', 'not-a-date') {
+    $assigned.delivery_eta = $eta
+    $result = (Get-TestProjection @($assigned))[0]
+    if ($result.requests.kind -contains 'status' -or $result.requests.kind -notcontains 'create') { throw 'Invalid estimate was sent or hid its create.' }
+  }
   'SQL eligibility cases passed.'
 }

@@ -240,6 +240,7 @@ select
 					  [order]         = json_query(p.order_key)
 					, [progress_status] = p.progress
 					, [delivery_eta]  = p.delivery_eta
+					, [eta]           = p.delivery_eta
 					, [actual]        = p.actual
 					, [site]          = json_query(case when p.progress in ('driving_to_drop', 'arrived_at_drop', 'dropping', 'completed_drop') then coalesce(d.site_key, f.site_key) end)
 					, [location]      = json_query(case when p.progress not in ('driving_to_drop', 'arrived_at_drop', 'dropping', 'completed_drop') then f.terminal_key end)
@@ -248,7 +249,8 @@ select
 			from keys f
 			outer apply (select top (1) k.site_key from keys k where k.order_number = p.order_number and upper(trim(k.drop_status)) = 'DNE' order by k.drop_depart desc, k.seq) d
 			where f.seq = p.seq and p.base_hold is null and p.progress is not null
-				and try_convert(datetimeoffset, nullif(trim(p.actual), '')) is not null
+				and ((p.progress = 'complete' and try_convert(datetimeoffset, nullif(trim(p.actual), '')) is not null)
+					or (p.progress != 'complete' and try_convert(datetimeoffset, nullif(trim(p.delivery_eta), '')) is not null))
 				and (p.progress != 'complete' or p.completion_hold is null) and upper(trim(p.source_status)) != 'CAN'
 				and (p.progress != 'complete' or not exists (select 1 from rows r join drop_readiness dr on dr.seq = r.seq where r.order_number = p.order_number and dr.ready = 0))
 			union all

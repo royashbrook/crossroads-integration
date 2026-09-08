@@ -72,7 +72,14 @@ try {
       if ($result.requests.Count -ne 0 -or $result.hold) { throw 'Nonpositive freight became a request or hold.' }
       continue
     }
-    $order.requests = @($order.requests.Where({$_.kind -ne 'status' -or $null -ne $_.payload.actual}))
+    foreach ($status in $order.requests.Where({$_.kind -eq 'status' -and $_.payload.progress_status -ne 'complete'})) {
+      $payload = [ordered]@{}
+      foreach ($property in $status.payload.PSObject.Properties) {
+        $payload[$property.Name] = $property.Value
+        if ($property.Name -eq 'delivery_eta') { $payload.eta = $property.Value }
+      }
+      $status.payload = [pscustomobject]$payload
+    }
     if ($order.order_number -eq '920006') {
       if ($result.requests.kind -contains 'save_bol' -or $result.requests.kind -contains 'status' -or $result.requests.kind -notcontains 'save_drop') { throw 'Invalid BOL suppressed a valid drop or allowed completion.' }
       continue

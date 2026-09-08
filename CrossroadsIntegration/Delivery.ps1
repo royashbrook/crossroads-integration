@@ -332,15 +332,19 @@ function Add-Delivery($orders, $baseUrl, $cacheDir, $persist, $Tenant, $Destinat
       }
     }
 
-    $requires = @($requests | Where-Object {$_.request.kind -in @('save_bol','save_drop')} | ForEach-Object hash)
+    $updates = @($requests | Where-Object {$_.request.kind -eq 'update'} | ForEach-Object hash)
+    $details = @($requests | Where-Object {$_.request.kind -in @('save_bol','save_drop')} | ForEach-Object hash)
     foreach ($requestItem in $requests) {
       $completion = $requestItem.request.kind -eq 'status' -and $order.progress -eq 'complete'
+      $dependent = $requestItem.request.kind -in @('save_bol','save_drop','status')
+      $requires = @($updates)
+      if ($completion) { $requires += $details }
       $hashes = @($requestItem.hash, $requestItem.prior_hash)
       if (@($hashes.Where({ $index.terminal.ContainsKey($_) -or ($requestItem.request.kind -eq 'create' -and $index.legacy.ContainsKey($_)) })).Count) { continue }
       $pendingHash = $hashes.Where({$index.pending_by_hash.ContainsKey($_)}, 'First')
       if ($pendingHash.Count) {
         $item = $index.pending_by_hash[$pendingHash[0]]
-        if ($completion -and [datetime]$item.data.source_updated -le $updated) {
+        if ($dependent -and [datetime]$item.data.source_updated -le $updated) {
           $item.data | Add-Member requires $requires -Force
           if ($persist) { Write-DeliveryItem $item.file $item.data }
         }
@@ -349,7 +353,7 @@ function Add-Delivery($orders, $baseUrl, $cacheDir, $persist, $Tenant, $Destinat
       }
 
       $item = New-DeliveryItem $order $requestItem.request $requestItem.hash $requestItem.key $baseUrl $cacheDir $Tenant $DestinationTenant
-      if ($completion) { $item.data | Add-Member requires $requires }
+      if ($dependent) { $item.data | Add-Member requires $requires }
       if ($persist) { Write-DeliveryItem $item.file $item.data }
       $index.pending_by_hash[$requestItem.hash] = $item
       $index.pending.Add($item)
@@ -406,7 +410,7 @@ function Get-DeliveryResponse($response, $kind, $orderNumber) {
     }
   )
   $alreadyApplied = $duplicate -or (
-    -not $parseError -and $kind -eq 'update' -and $responseText -match '(?i)order is already loaded|order (?:has )?already been updated'
+    -not $parseError -and $kind -eq 'update' -and $responseText -match '(?i)order (?:has )?already been updated'
   )
   $unconfirmedCreate = $accepted -and $kind -eq 'create' -and [string]::IsNullOrWhiteSpace($responseStatus)
   $sent = $accepted -and -not $unconfirmedCreate -and ([string]::IsNullOrWhiteSpace($responseStatus) -or $responseStatus -eq 'synced')
@@ -484,6 +488,9 @@ function Send-CrossroadsDelivery(
       $confirmed = Confirm-DestinationCreation $group.Group[0] $token $cacheDir $index
     }
     $reported = $false
+    $update = @(@($group.Group) + @($index.receipts.Values) | Where-Object {
+      $_.data.kind -eq 'update' -and (Get-CreatedKey $_.data) -ceq (Get-CreatedKey $group.Group[0].data)
+    } | Sort-Object {$_.data.source_updated}) | Select-Object -Last 1
     foreach ($item in @($group.Group | Sort-Object { if ($_.data.kind -eq 'create') { 0 } else { 1 } }, { $_.data.stage_code }, { $_.data.request_code }, file)) {
       if ($blocked) { continue }
       if ($item.data.kind -ne 'create' -and -not $confirmed) {
@@ -498,7 +505,13 @@ function Send-CrossroadsDelivery(
         [pscustomobject]@{ order_number = $item.data.order_number; kind = $item.data.kind; http = $null; ok = $true; synced = $true; state = 'sent'; status = 'not_required'; error = '' }
         continue
       }
-      if ($item.data.kind -eq 'status' -and $item.data.stage_code -eq 90) {
+      $completion = $item.data.kind -eq 'status' -and $item.data.stage_code -eq 90
+      if ($item.data.kind -in @('save_bol','save_drop','status')) {
+        # Older pending details did not record their update prerequisite.
+        if (-not $item.data.PSObject.Properties['requires'] -and -not $completion -and $update) {
+          $item.data | Add-Member requires @($update.data.hash)
+          Write-DeliveryItem $item.file $item.data
+        }
         $sent = @{}
         foreach ($receipt in $index.receipts.Values) {
           if ($receipt.data.state -ne 'sent') { continue }
@@ -507,8 +520,10 @@ function Send-CrossroadsDelivery(
             foreach ($hash in $receipt.hashes) { $sent[$hash] = $true }
           }
         }
-        if (-not $item.data.PSObject.Properties['requires'] -or @($item.data.requires.Where({-not $sent.ContainsKey($_)})).Count) {
-          [pscustomobject]@{ order_number=$item.data.order_number; kind='status'; http=$null; ok=$false; synced=$false; state='pending'; status='waiting_for_details'; error='Completion awaits confirmed BOL and drop delivery.' }
+        if (($completion -and -not $item.data.PSObject.Properties['requires']) -or
+            ($item.data.PSObject.Properties['requires'] -and @($item.data.requires.Where({-not $sent.ContainsKey($_)})).Count)) {
+          $status = if ($completion) { 'waiting_for_details' } else { 'waiting_for_update' }
+          [pscustomobject]@{ order_number=$item.data.order_number; kind=$item.data.kind; http=$null; ok=$false; synced=$false; state='pending'; status=$status; error='Request awaits confirmed prerequisite delivery.' }
           continue
         }
       }
