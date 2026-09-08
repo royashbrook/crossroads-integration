@@ -259,4 +259,13 @@ Describe 'Destination creation prerequisite' {
     $result.status | Should -Be @('synced','not_required','synced')
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter {$Path -eq '/v1/order/update'}
   }
+
+  It 'accepts a synced update even when its informational message says already loaded' {
+    Confirm-TestCreation $cache TEST1 'https://example.invalid'
+    $order.requests = @([pscustomobject]@{kind='update';path='/v1/order/update';message_key='update';payload_json='{"order":{"order_number":"TEST1"}}'}) + $order.requests
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=200;data=[pscustomobject]@{status='synced';message='order is already loaded'}} }
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
+    $result.state | Should -Be @('sent','sent')
+  }
 }
