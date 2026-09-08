@@ -92,7 +92,7 @@
 		, [completion_hold] = case when c.fields is not null then 'completion missing ' + c.fields
 			when exists (select 1 from rows r where r.order_number = f.order_number
 				and (coalesce(try_convert(float, r.net_volume), 0) <= 0 or coalesce(try_convert(float, r.gross_volume), 0) <= 0
-					or try_convert(datetimeoffset, r.bol_date) is null)) then 'completion requires positive volumes and a valid BOL date' end
+					or try_convert(datetimeoffset, nullif(trim(r.bol_date), '')) is null)) then 'completion requires positive volumes and a valid BOL date' end
 	from totals t
 	join source_rows f on f.seq = t.first_seq
 	left join problems p on p.order_number = f.order_number and p.completion = 0
@@ -113,7 +113,7 @@
 	where a.quantity > 0
 ), drop_readiness as (
 	select r.seq, [ready] = case
-		when try_convert(float, r.net_volume) > 0 and try_convert(datetimeoffset, r.drop_depart) is not null
+		when try_convert(float, r.net_volume) > 0 and try_convert(datetimeoffset, nullif(trim(r.drop_depart), '')) is not null
 			and count(a.seq) > 0 and count(a.seq) = count(nullif(trim(a.tank_id), ''))
 			and (count(a.seq) = 1 or abs(sum(a.quantity) - try_convert(float, r.net_volume)) < 0.000001)
 		then 1 else 0 end
@@ -248,7 +248,7 @@ select
 			from keys f
 			outer apply (select top (1) k.site_key from keys k where k.order_number = p.order_number and upper(trim(k.drop_status)) = 'DNE' order by k.drop_depart desc, k.seq) d
 			where f.seq = p.seq and p.base_hold is null and p.progress is not null
-				and try_convert(datetimeoffset, p.actual) is not null
+				and try_convert(datetimeoffset, nullif(trim(p.actual), '')) is not null
 				and (p.progress != 'complete' or p.completion_hold is null) and upper(trim(p.source_status)) != 'CAN'
 				and (p.progress != 'complete' or not exists (select 1 from rows r join drop_readiness dr on dr.seq = r.seq where r.order_number = p.order_number and dr.ready = 0))
 			union all

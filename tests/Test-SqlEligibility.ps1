@@ -26,13 +26,14 @@ function Test-SqlEligibility($connectionString, $sql, $fixture) {
   $result = (Get-TestProjection @($row))[0]
   $drop = (Get-Body $result save_drop)[0]
   if (($drop.details.tank.tank_id -join ',') -ne '3,8' -or ($drop.details.quantity -join ',') -ne '1000,2000') { throw 'Split tank quantities or identity changed.' }
-  foreach ($case in 'no_tanks','unknown_tank','mismatched_split','missing_time','zero_net') {
+  foreach ($case in 'no_tanks','unknown_tank','mismatched_split','missing_time','blank_time','zero_net') {
     $bad = $row | Select-Object *
     switch ($case) {
       no_tanks { $bad.tank_allocations = @() }
       unknown_tank { $bad.tank_allocations = @(@{tank_id=$null;quantity=3000}) }
       mismatched_split { $bad.net_volume = '2900' }
       missing_time { $bad.drop_depart = '' }
+      blank_time { $bad.drop_depart = '   ' }
       zero_net { $bad.net_volume = '0' }
     }
     $result = (Get-TestProjection @($bad))[0]
