@@ -206,6 +206,20 @@ function Initialize-CrossroadsDelivery($cacheDir = (Join-Path $PWD 'cache')) {
 function Initialize-Delivery($cacheDir) {
   New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
   $index = Get-DeliveryIndex $cacheDir -Prune
+  foreach ($item in @($index.receipts.Values)) {
+    if ($item.data.state -ne 'rejected' -or $item.data.status -ne 'pending' -or $item.data.http -lt 200 -or $item.data.http -ge 300) { continue }
+    $key = Get-ReceiptKey $item.data
+    if (@($index.pending.Where({(Get-ReceiptKey $_.data) -eq $key -and [datetime]$_.data.source_updated -ge [datetime]$item.data.source_updated})).Count) { continue }
+    $old = $item.file
+    $item.file = $old -replace '\.X40\.', '.X00.'
+    $item.data.state = 'pending'
+    Write-DeliveryItem $item.file $item.data
+    Remove-Item -LiteralPath $old
+    $index.receipts.Remove($key)
+    foreach ($hash in $item.hashes) { $index.terminal.Remove($hash) }
+    $index.pending.Add($item)
+    $index.pending_by_hash[$item.data.hash] = $item
+  }
   $protected = @{}
   foreach ($item in $index.created.Values) { $protected[$item.file] = $true }
   $required = @{}
@@ -397,7 +411,7 @@ function Get-DeliveryResponse($response, $kind, $orderNumber) {
   $unconfirmedCreate = $accepted -and $kind -eq 'create' -and [string]::IsNullOrWhiteSpace($responseStatus)
   $sent = $accepted -and -not $unconfirmedCreate -and ([string]::IsNullOrWhiteSpace($responseStatus) -or $responseStatus -eq 'synced')
   $wrappedRetry = $responseText -match '(?i)too many requests|error code:\s*(?:408|429|5\d\d)\b|internal server error|timed? out|temporar(?:y|ily) unavailable'
-  $retryable = $unconfirmedCreate -or ($parseError -and $http -ge 200 -and $http -lt 300) -or $http -eq 0 -or $http -in @(401, 403, 408, 429) -or $http -ge 500 -or ($http -ge 300 -and $http -lt 400) -or $wrappedRetry
+  $retryable = ($accepted -and $responseStatus -eq 'pending') -or $unconfirmedCreate -or ($parseError -and $http -ge 200 -and $http -lt 300) -or $http -eq 0 -or $http -in @(401, 403, 408, 429) -or $http -ge 500 -or ($http -ge 300 -and $http -lt 400) -or $wrappedRetry
   $rejected = -not $sent -and -not $alreadyApplied -and -not $retryable
   $stateCode = if ($alreadyApplied) { 'X80' } elseif ($sent) { 'X90' } elseif ($rejected) { 'X40' } else { 'X00' }
   $status = if ($duplicate) { 'duplicate' }
