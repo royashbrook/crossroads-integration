@@ -61,6 +61,55 @@ Describe 'Delivery boundaries' {
     }
   }
 
+  It 'keeps an asynchronous pending response retryable and later sends it' {
+    Confirm-TestCreation $cache TEST1 'https://example.invalid'
+    Mock Get-CrossroadsToken -ModuleName CrossroadsIntegration { 'fake' }
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=200;data=[pscustomobject]@{status='pending';message='Processing is taking longer than expected.'}} }
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $r = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
+    $r.state | Should -Be pending
+    $r.status | Should -Be pending
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=200;data=[pscustomobject]@{status='synced'}} }
+    (Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery).state | Should -Be sent
+  }
+
+  It 'restores previously misclassified pending acknowledgments without losing their response' {
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $file = Get-ChildItem $cache -Filter '*.X00.*.json'
+    $data = Get-Content $file -Raw | ConvertFrom-Json
+    $data.state='rejected'; $data.status='pending'; $data.http=200
+    $data.response=[pscustomobject]@{status='pending';message='Still processing'}
+    $old = $file.FullName -replace '\.X00\.', '.X40.'
+    $data | ConvertTo-Json -Depth 64 | Set-Content $old
+    Remove-Item $file
+    Initialize-CrossroadsDelivery $cache
+    $restored = Get-Content $file.FullName -Raw | ConvertFrom-Json
+    $restored.hash | Should -Be $data.hash
+    $restored.response.message | Should -Be 'Still processing'
+    $restored.state | Should -Be pending
+    Test-Path $old | Should -BeFalse
+  }
+
+  It 'does not revive an acknowledgment superseded by a <replacement> payload' -ForEach @(@{replacement='pending'},@{replacement='sent'}) {
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $file = Get-ChildItem $cache -Filter '*.X00.*.json'
+    $data = Get-Content $file -Raw | ConvertFrom-Json
+    $data.state='rejected'; $data.status='pending'; $data.http=200
+    $data | ConvertTo-Json -Depth 64 | Set-Content ($file.FullName -replace '\.X00\.', '.X40.')
+    Remove-Item $file
+    $order.updated_date='2026-01-01T02:00:00'
+    $order.requests[0].payload_json='{"order_number":"TEST1","value":2}'
+    $new = @(Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery)[0]
+    if ($replacement -eq 'sent') {
+      $new.data.state='sent'; $new.data.status='synced'
+      $new.data | ConvertTo-Json -Depth 64 | Set-Content ($new.file -replace '\.X00\.', '.X90.')
+      Remove-Item $new.file
+    }
+    Initialize-CrossroadsDelivery $cache
+    Test-Path $file.FullName | Should -BeFalse
+    @(Get-ChildItem $cache -Filter '*.X00.*.json').Count | Should -Be $(if ($replacement -eq 'pending') {1} else {0})
+  }
+
   It 'retains HTTP error classification for non-JSON bodies' {
     & $module {
       foreach ($http in 400,404,422) {
