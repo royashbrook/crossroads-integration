@@ -64,6 +64,24 @@ select @Source = (select
 	, [bol_date]        = convert(varchar(23), cast(coalesce(l.stp_departuredate, l.stp_arrivaldate) at time zone 'Eastern Standard Time' at time zone 'UTC' as datetime2(3)), 126) + 'Z'
 	, [gross_volume]    = f.fgt_quantity
 	, [net_volume]      = case when cmd.cmd_class in ('100', '200') then f.fgt_volume2 else f.fgt_weight end
+	, [tank_allocations] = json_query((
+		select a.quantity, t.tank_id
+		from (values
+			  (1, f.fgt_deliverytank1), (2, f.fgt_deliverytank2), (3, f.fgt_deliverytank3)
+			, (4, f.fgt_deliverytank4), (5, f.fgt_deliverytank5), (6, f.fgt_deliverytank6)
+			, (7, f.fgt_deliverytank7), (8, f.fgt_deliverytank8), (9, f.fgt_deliverytank9), (10, f.fgt_deliverytank10)
+		) a(bucket, quantity)
+		outer apply (
+			select [tank_id] = case when count(*) = 1 then convert(varchar(20), min(td.cmp_tank_id)) end
+			from company_tankdetail td
+			where td.cmp_id = d.cmp_id and td.forecast_bucket = a.bucket
+				and (td.cmd_code = f.cmd_code or td.activecommoditycode = f.cmd_code
+					or charindex(',' + rtrim(f.cmd_code) + ',', ',' + replace(td.validcommoditylist, ' ', '') + ',') > 0)
+		) t
+		where a.quantity > 0
+		order by a.bucket
+		for json path, include_null_values
+	  ))
 from
 	changed c
 	join orderheader o on o.ord_hdrnumber = c.ord_hdrnumber

@@ -1,4 +1,5 @@
 BeforeAll {
+  . (Join-Path $PSScriptRoot 'Confirm-TestCreation.ps1')
   Import-Module (Join-Path $PSScriptRoot 'TMWReference.psm1') -Force
   Import-Module CrossroadsClient -MinimumVersion 1.0.2 -Force
   Import-Module (Join-Path $PSScriptRoot '../CrossroadsIntegration/CrossroadsIntegration.psd1') -Force
@@ -113,10 +114,12 @@ Describe 'Crossroads delivery' {
     $second = @(Send-CrossroadsDelivery 'http://localhost:8808' test test $script:cache @delivery)
 
     $first[0].synced | Should -BeFalse
-    $first.Count | Should -Be 3
-    $first.state | Should -Be @('rejected', 'rejected', 'rejected')
-    $second.Count | Should -Be 0
-    @(Get-ChildItem $script:cache -Filter '*.X40.*.json').Count | Should -Be 3
+    $first.Count | Should -Be 1
+    $first.state | Should -Be @('rejected')
+    $second.Count | Should -Be 1
+    $second[0].status | Should -Be 'waiting_for_create'
+    @(Get-ChildItem $script:cache -Filter '*.X40.*.json').Count | Should -Be 1
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly
   }
 
   It 'accepts only an explicit duplicate create 422' {
@@ -131,7 +134,8 @@ Describe 'Crossroads delivery' {
 
     $first[0].status | Should -Be 'duplicate'
     $first[0].state | Should -Be 'reconciled'
-    $second.Count | Should -Be 0
+    $second.Count | Should -Be 1
+    $second[0].status | Should -Be 'waiting_for_create'
   }
 
   It 'classifies create responses by code or exact order identity' -ForEach @(
@@ -161,6 +165,7 @@ Describe 'Crossroads delivery' {
   }
 
   It 'accepts an already-loaded update as delivered' {
+    Confirm-TestCreation $script:cache '900001'
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') {
         return [pscustomobject]@{ http = 422; data = [pscustomobject]@{ detail = "Duplicate order: An order with number '$(($Body | ConvertFrom-Json).origin_order_number)' already exists for this tenant." } }
@@ -192,6 +197,7 @@ Describe 'Crossroads delivery' {
   }
 
   It 'records update rejections without blocking later requests' {
+    Confirm-TestCreation $script:cache '900001'
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') {
         return [pscustomobject]@{ http = 422; data = [pscustomobject]@{ detail = "Duplicate order: An order with number '$(($Body | ConvertFrom-Json).origin_order_number)' already exists for this tenant." } }
@@ -214,6 +220,7 @@ Describe 'Crossroads delivery' {
   }
 
   It 'continues completion after a rejected BOL' {
+    Confirm-TestCreation $script:cache '900002'
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') {
         return [pscustomobject]@{ http = 422; data = [pscustomobject]@{ detail = "Duplicate order: An order with number '$(($Body | ConvertFrom-Json).origin_order_number)' already exists for this tenant." } }
@@ -252,8 +259,8 @@ Describe 'Crossroads delivery' {
     $second = @(ConvertTo-CrossroadsOrder @($row))
     $staged = @(Add-CrossroadsDelivery $second 'http://localhost:8808' $script:cache $true @delivery)
 
-    $staged.Count | Should -Be 1
-    @(Get-ChildItem $script:cache -Filter '*.R90.X40.*.json').Count | Should -Be 1
+    $staged.Count | Should -Be 2
+    @(Get-ChildItem $script:cache -Filter '*.R90.X40.*.json').Count | Should -Be 0
     @(Get-ChildItem $script:cache -Filter '*.R90.X00.*.json').Count | Should -Be 1
   }
 

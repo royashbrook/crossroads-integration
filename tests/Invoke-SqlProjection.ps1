@@ -27,6 +27,7 @@ for ($i = 0; $i -lt 23; $i++) {
     21 { $row.volume = '-2.5' }
     22 { $row.net_volume = '7.899000000000000e+003'; $row.gross_volume = '1.2345678901234567e+003' }
   }
+  $row | Add-Member tank_allocations @(@{tank_id='3';quantity=[double]$row.volume})
   $rows.Add($row)
   if ($i -in 2,12,13,14,19,20) {
     $next = $row | Select-Object *
@@ -67,6 +68,20 @@ try {
   $requests = 0
   foreach ($order in $expected) {
     $result = @($actual.Where({$_.order_number -eq $order.order_number}))[0]
+    if ($order.order_number -eq '920021') {
+      if ($result.requests.Count -ne 0 -or $result.hold) { throw 'Nonpositive freight became a request or hold.' }
+      continue
+    }
+    $order.requests = @($order.requests.Where({$_.kind -ne 'status' -or $null -ne $_.payload.actual}))
+    if ($order.order_number -eq '920006') {
+      if ($result.requests.kind -contains 'save_bol' -or $result.requests.kind -contains 'status' -or $result.requests.kind -notcontains 'save_drop') { throw 'Invalid BOL suppressed a valid drop or allowed completion.' }
+      continue
+    }
+    foreach ($drop in $order.requests.Where({$_.kind -eq 'save_drop'})) {
+      foreach ($detail in $drop.payload.details) {
+        $detail | Add-Member tank ([pscustomobject]@{source_id=$drop.payload.site.source_id;tank_id='3'})
+      }
+    }
     if ([datetime]$result.updated_date -ne [datetime]$order.updated_date -or $result.progress -cne $order.progress -or $result.hold -cne $order.hold) { throw "Envelope differs: $($order.order_number)" }
     $normalized = @($result.requests | ForEach-Object { [pscustomobject]@{kind=$_.kind;path=$_.path;payload=ConvertFrom-Json $_.payload_json -Depth 64 -DateKind String} })
     $left = ConvertTo-Json -InputObject @($order.requests) -Depth 64 -Compress
@@ -82,6 +97,8 @@ try {
     }
   }
   [pscustomobject]@{orders=$actual.Count;requests=$requests;payloads_match=$true;create_covers_update=$true} | Format-List
+  . (Join-Path $PSScriptRoot 'Test-SqlEligibility.ps1')
+  Test-SqlEligibility $connectionString $sql $fixture
 }
 finally {
   docker rm -f $container

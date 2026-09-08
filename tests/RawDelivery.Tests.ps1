@@ -1,4 +1,5 @@
 BeforeAll {
+  . (Join-Path $PSScriptRoot 'Confirm-TestCreation.ps1')
   Import-Module (Join-Path $PSScriptRoot '../CrossroadsIntegration/CrossroadsIntegration.psd1') -Force
   $delivery = @{ Tenant = 'SOURCE'; DestinationTenant = 'TARGET' }
   $payload = '{"order":{"origin_order_number":"123"},"site":{"source_id":"SITE"},"details":[{"quantity":7900.0}]}'
@@ -9,6 +10,7 @@ Describe 'Opaque request delivery' {
   BeforeEach {
     $cache = Join-Path $TestDrive ([guid]::NewGuid().ToString())
     $null = New-Item -ItemType Directory $cache
+    Confirm-TestCreation $cache '123' 'https://example.invalid'
     $old = [pscustomobject]@{
       order_number = '123'; updated_date = '2026-09-05T16:00:00'; progress = 'complete'; hold = $null
       requests = @([pscustomobject]@{ kind = 'save_drop'; path = '/v1/order/save_drop'; payload = ConvertFrom-Json $payload })
@@ -33,7 +35,7 @@ Describe 'Opaque request delivery' {
   It 'honors old terminal receipts without suppressing a later changed quantity' {
     $item = @(Add-CrossroadsDelivery @($old) 'https://example.invalid' $cache $true @delivery)[0]
     $null = Send-CrossroadsDelivery 'https://example.invalid' test test $cache @delivery
-    $file = @(Get-ChildItem $cache -Filter '*.X90.*.json')[0].FullName
+    $file = @(Get-ChildItem $cache -Filter '*.R40.X90.*.json')[0].FullName
     $data = Get-Content $file -Raw | ConvertFrom-Json -DateKind String
     $data | Add-Member payload (ConvertFrom-Json $data.payload_json -DateKind String)
     $data.PSObject.Properties.Remove('payload_json')
@@ -53,7 +55,7 @@ Describe 'Opaque request delivery' {
     $pending = @(Add-CrossroadsDelivery @($new) 'https://example.invalid' $cache $true @delivery)
     $pending.Count | Should -Be 1
     $pending[0].file | Should -BeExactly $item.file
-    @(Get-ChildItem $cache -File).Count | Should -Be 1
+    @(Get-ChildItem $cache -Filter '*.X00.*.json').Count | Should -Be 1
     $null = Send-CrossroadsDelivery 'https://example.invalid' test test $cache @delivery
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $RawJson -and $Body -ceq $payload }
     @(Add-CrossroadsDelivery @($new) 'https://example.invalid' $cache $true @delivery).Count | Should -Be 0
