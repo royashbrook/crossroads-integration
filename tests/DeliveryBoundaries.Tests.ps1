@@ -90,6 +90,26 @@ Describe 'Delivery boundaries' {
     Test-Path $old | Should -BeFalse
   }
 
+  It 'does not revive an acknowledgment superseded by a <replacement> payload' -ForEach @(@{replacement='pending'},@{replacement='sent'}) {
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $file = Get-ChildItem $cache -Filter '*.X00.*.json'
+    $data = Get-Content $file -Raw | ConvertFrom-Json
+    $data.state='rejected'; $data.status='pending'; $data.http=200
+    $data | ConvertTo-Json -Depth 64 | Set-Content ($file.FullName -replace '\.X00\.', '.X40.')
+    Remove-Item $file
+    $order.updated_date='2026-01-01T02:00:00'
+    $order.requests[0].payload_json='{"order_number":"TEST1","value":2}'
+    $new = @(Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery)[0]
+    if ($replacement -eq 'sent') {
+      $new.data.state='sent'; $new.data.status='synced'
+      $new.data | ConvertTo-Json -Depth 64 | Set-Content ($new.file -replace '\.X00\.', '.X90.')
+      Remove-Item $new.file
+    }
+    Initialize-CrossroadsDelivery $cache
+    Test-Path $file.FullName | Should -BeFalse
+    @(Get-ChildItem $cache -Filter '*.X00.*.json').Count | Should -Be $(if ($replacement -eq 'pending') {1} else {0})
+  }
+
   It 'retains HTTP error classification for non-JSON bodies' {
     & $module {
       foreach ($http in 400,404,422) {
