@@ -1,3 +1,5 @@
+set nocount on;
+-- Reuse parsed rows across the nested payload queries instead of expanding the CTE each time.
 ;with source_rows as (
 	select
 		  [seq] = convert(int, j.[key])
@@ -30,13 +32,22 @@
 		, net_volume varchar(64)
 		, tank_allocations nvarchar(max) as json
 	) r
-), positive_rows as (
+)
+select * into #crossroads_source from source_rows;
+create unique clustered index ix_seq on #crossroads_source(seq);
+
+;with positive_rows as (
 	select *, [drop_volume] = sum(try_convert(float, volume)) over (partition by order_number, site_id, product_id)
-	from source_rows
+	from #crossroads_source
 	where try_convert(float, nullif(volume, '')) > 0
 ), rows as (
 	select * from positive_rows where drop_volume > 0.5
-), totals as (
+)
+select * into #crossroads_rows from rows;
+create unique clustered index ix_seq on #crossroads_rows(seq);
+create index ix_order on #crossroads_rows(order_number);
+
+;with totals as (
 	select
 		  s.order_number
 		, [first_seq]      = coalesce(min(r.seq), min(s.seq))
@@ -46,12 +57,12 @@
 		, [drops_done]     = sum(case when upper(trim(r.drop_status)) = 'DNE' then 1 else 0 end)
 		, [drop_actual]    = max(case when upper(trim(r.drop_status)) = 'DNE' then nullif(r.drop_depart, '') end)
 		, [lift_actual]    = max(nullif(r.lift_depart, ''))
-	from source_rows s
-	left join rows r on r.seq = s.seq
+	from #crossroads_source s
+	left join #crossroads_rows r on r.seq = s.seq
 	group by s.order_number
 ), missing as (
 	select distinct r.order_number, v.position, v.field, v.completion
-	from rows r
+	from #crossroads_rows r
 	cross apply (values
 		  (1, 'site_id', 0, cast(r.site_id as nvarchar(max)))
 		, (2, 'product_id', 0, cast(r.product_id as nvarchar(max)))
@@ -90,11 +101,11 @@
 				then 'delivery window end must be after start'
 		  end
 		, [completion_hold] = case when c.fields is not null then 'completion missing ' + c.fields
-			when exists (select 1 from rows r where r.order_number = f.order_number
+			when exists (select 1 from #crossroads_rows r where r.order_number = f.order_number
 				and (coalesce(try_convert(float, r.net_volume), 0) <= 0 or coalesce(try_convert(float, r.gross_volume), 0) <= 0
 					or try_convert(datetimeoffset, nullif(trim(r.bol_date), '')) is null)) then 'completion requires positive volumes and a valid BOL date' end
 	from totals t
-	join source_rows f on f.seq = t.first_seq
+	join #crossroads_source f on f.seq = t.first_seq
 	left join problems p on p.order_number = f.order_number and p.completion = 0
 	left join problems c on c.order_number = f.order_number and c.completion = 1
 ), keys as (
@@ -105,10 +116,10 @@
 		, [product_key] = (select nullif(trim(product_id), '') as source_id, nullif(trim(product_name), '') as source_name for json path, without_array_wrapper)
 		, [supplier_key] = (select nullif(trim(supplier_id), '') as source_id, nullif(trim(supplier_name), '') as source_name for json path, without_array_wrapper)
 		, [terminal_key] = (select nullif(trim(terminal_id), '') as source_id, nullif(trim(terminal_name), '') as source_name for json path, without_array_wrapper)
-	from rows r
+	from #crossroads_rows r
 ), allocations as (
 	select r.seq, a.tank_id, a.quantity
-	from rows r
+	from #crossroads_rows r
 	cross apply openjson(r.tank_allocations) with (tank_id varchar(20), quantity float) a
 	where a.quantity > 0
 ), drop_readiness as (
@@ -117,7 +128,7 @@
 			and count(a.seq) > 0 and count(a.seq) = count(nullif(trim(a.tank_id), ''))
 			and (count(a.seq) = 1 or abs(sum(a.quantity) - try_convert(float, r.net_volume)) < 0.000001)
 		then 1 else 0 end
-	from rows r
+	from #crossroads_rows r
 	left join allocations a on a.seq = r.seq
 	group by r.seq, r.net_volume, r.drop_depart
 ), payloads as (
@@ -139,7 +150,7 @@
 						, [contracts] = json_query('[]')
 					from (
 						select [first_seq] = min(seq), terminal_id, product_id, supplier_id
-						from rows
+						from #crossroads_rows
 						where order_number = s.order_number and site_id = d.site_id and product_id = d.product_id
 						group by terminal_id, product_id, supplier_id
 					) l
@@ -149,7 +160,7 @@
 				  ))
 			from (
 				select [first_seq] = min(seq), site_id, product_id, [volume] = sum(convert(float, nullif(volume, '')))
-				from rows where order_number = s.order_number
+				from #crossroads_rows where order_number = s.order_number
 				group by site_id, product_id
 			) g
 			join keys d on d.seq = g.first_seq
@@ -162,7 +173,7 @@ select
 	  [order_number] = p.order_number
 	, [updated_date] = convert(varchar(23), p.latest_updated, 126)
 	, [progress]     = case when p.base_hold is null and upper(trim(p.source_status)) != 'CAN' then p.progress end
-	, [hold]         = case when exists (select 1 from rows where order_number = p.order_number) then coalesce(p.base_hold, case when upper(trim(p.source_status)) != 'CAN' then
+	, [hold]         = case when exists (select 1 from #crossroads_rows where order_number = p.order_number) then coalesce(p.base_hold, case when upper(trim(p.source_status)) != 'CAN' then
 		case when p.progress is null then 'unmapped status ' + p.source_status when p.progress = 'complete' then p.completion_hold end end)
 	  end
 	, [requests]     = json_query(coalesce((
@@ -204,7 +215,7 @@ select
 					  ))
 				for json path, without_array_wrapper, include_null_values
 			)
-			from (select min(seq) as first_seq from rows where order_number = p.order_number group by bol_number, terminal_id) g
+			from (select min(seq) as first_seq from #crossroads_rows where order_number = p.order_number group by bol_number, terminal_id) g
 			join keys b on b.seq = g.first_seq
 			where p.base_hold is null and p.completion_hold is null and p.progress = 'complete' and upper(trim(p.source_status)) != 'CAN'
 			union all
@@ -227,10 +238,10 @@ select
 					  ))
 				for json path, without_array_wrapper
 			)
-			from (select min(seq) as first_seq from rows where order_number = p.order_number group by site_id) g
+			from (select min(seq) as first_seq from #crossroads_rows where order_number = p.order_number group by site_id) g
 			join keys s on s.seq = g.first_seq
 			where p.base_hold is null and p.progress = 'complete' and upper(trim(p.source_status)) != 'CAN'
-				and not exists (select 1 from rows r join drop_readiness dr on dr.seq = r.seq where r.order_number = p.order_number and r.site_id = s.site_id and dr.ready = 0)
+				and not exists (select 1 from #crossroads_rows r join drop_readiness dr on dr.seq = r.seq where r.order_number = p.order_number and r.site_id = s.site_id and dr.ready = 0)
 			union all
 			select 90, '', 'status', '/v1/order/update_status', case when p.progress = 'complete' then (
 				select json_query(p.order_key) as [order], p.progress as progress_status, p.actual
@@ -252,7 +263,7 @@ select
 				and ((p.progress = 'complete' and try_convert(datetimeoffset, nullif(trim(p.actual), '')) is not null)
 					or (p.progress != 'complete' and try_convert(datetimeoffset, nullif(trim(p.delivery_eta), '')) is not null))
 				and (p.progress != 'complete' or p.completion_hold is null) and upper(trim(p.source_status)) != 'CAN'
-				and (p.progress != 'complete' or not exists (select 1 from rows r join drop_readiness dr on dr.seq = r.seq where r.order_number = p.order_number and dr.ready = 0))
+				and (p.progress != 'complete' or not exists (select 1 from #crossroads_rows r join drop_readiness dr on dr.seq = r.seq where r.order_number = p.order_number and dr.ready = 0))
 			union all
 			select 99, '', 'cancel', '/v1/order/cancel', (
 				select json_query(p.order_key) as [order], 'CANCELLED IN TMS' as reason_code
@@ -260,7 +271,7 @@ select
 			)
 			where upper(trim(p.source_status)) = 'CAN'
 		) q
-		where q.kind = 'cancel' or exists (select 1 from rows where order_number = p.order_number)
+		where q.kind = 'cancel' or exists (select 1 from #crossroads_rows where order_number = p.order_number)
 		order by q.position, q.sortkey
 		for json path
 	  ), '[]'))
