@@ -43,6 +43,14 @@ for ($i = 0; $i -lt 23; $i++) {
   }
 }
 
+# A multi-order batch exercises repeated intermediate references, not just individual payloads.
+for ($i = 0; $i -lt 100; $i++) {
+  $row = $fixture[0] | Select-Object *
+  $row.order_number = "$(921000 + $i)"
+  $row | Add-Member tank_allocations @(@{tank_id='3';quantity=[double]$row.volume})
+  $rows.Add($row)
+}
+
 $password = [guid]::NewGuid().ToString('N') + 'aA1!'
 "::add-mask::$password"
 $container = "crossroads-sql-$PID"
@@ -62,7 +70,11 @@ try {
 
   $source = ConvertTo-Json -InputObject @($rows) -Depth 64 -Compress -EscapeHandling EscapeNonAscii
   $sql = Join-Path (Get-Module CrossroadsIntegration).ModuleBase 'Adapters/TMW/Get-Requests.sql'
-  $actual = @(Get-CrossroadsSqlData -SqlFile $sql -ConnectionString $connectionString -Parameters @{Source=$source})
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  $actual = @(Get-CrossroadsSqlData -SqlFile $sql -ConnectionString $connectionString -Parameters @{Source=$source} -Timeout 30)
+  $projectionSeconds = $watch.Elapsed.TotalSeconds
+  $empty = @(Get-CrossroadsSqlData -SqlFile $sql -ConnectionString $connectionString -Parameters @{Source='[]'} -Timeout 10)
+  if ($empty.Count) { throw 'Empty input emitted orders.' }
   $expected = @(ConvertTo-CrossroadsOrder @($rows))
   if ($actual.Count -ne $expected.Count) { throw 'SQL order count differs.' }
   $requests = 0
@@ -103,7 +115,7 @@ try {
       }
     }
   }
-  [pscustomobject]@{orders=$actual.Count;requests=$requests;payloads_match=$true;create_covers_update=$true} | Format-List
+  [pscustomobject]@{orders=$actual.Count;requests=$requests;payloads_match=$true;create_covers_update=$true;projection_seconds=$projectionSeconds} | Format-List
   . (Join-Path $PSScriptRoot 'Test-SqlEligibility.ps1')
   Test-SqlEligibility $connectionString $sql $fixture
 }
