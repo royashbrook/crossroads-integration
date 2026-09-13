@@ -1,7 +1,7 @@
 function Get-CrossroadsTMWData {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$BillTo,
+    [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$BillTo,
     [string]$Division,
     [Nullable[datetime]]$From,
     [Nullable[datetime]]$Through,
@@ -24,11 +24,11 @@ function Get-CrossroadsTMWData {
 function Receive-CrossroadsTMWData {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$BillTo,
+    [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$BillTo,
     [string]$Division,
     [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$BaseUrl,
-    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$Tenant,
-    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$DestinationTenant,
+    [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$Tenant,
+    [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$DestinationTenant,
     [Nullable[datetime]]$From,
     [Nullable[datetime]]$Through,
     [string]$ConnectionString = $env:CONNECTION_STRING,
