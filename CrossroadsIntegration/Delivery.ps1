@@ -100,7 +100,7 @@ function Get-DeliveryIndex($cacheDir, [switch]$Prune) {
     if (-not $item.data.PSObject.Properties['payload_json']) { $oldFormat = $true }
     if ($state -ne '00') {
       $terminalItems.Add($item)
-      if ($item.data.kind -eq 'create' -and $state -eq '90' -and $item.data.status -eq 'synced') {
+      if ($item.data.kind -eq 'create' -and $state -eq '90' -and $item.data.status -in @('synced', 'exists')) {
         $created[(Get-CreatedKey $item.data)] = $item
       }
       $key = Get-ReceiptKey $item.data
@@ -439,7 +439,7 @@ function Get-DeliveryResponse($response, $kind, $orderNumber) {
   [pscustomobject]@{ http = $http; state_code = $stateCode; status = $status; error_code = $errorCode; error = $errorMessage }
 }
 
-function Confirm-DestinationCreation($item, $token, $cacheDir, $index) {
+function Confirm-CrossroadsCreation($item, $token, $cacheDir, $index) {
   $data = $item.data
   $request = [pscustomobject]@{ kind='create'; path='/v1/order/get'; payload=@{order_number="$($data.order_number)"} }
   $read = Invoke-CrossroadsRequest -BaseUrl $data.base_url -Path $request.path -Body $request.payload `
@@ -453,6 +453,17 @@ function Confirm-DestinationCreation($item, $token, $cacheDir, $index) {
   $destinationMatches = $null -ne $destination -and $destination.PSObject.Properties['origin_order_number'] -and "$($destination.origin_order_number)" -ceq "$($data.order_number)"
   $numberPresent = $null -ne $destination -and $destination.PSObject.Properties['destination_order_number'] -and -not [string]::IsNullOrWhiteSpace("$($destination.destination_order_number)")
   $confirmed = $read.http -ge 200 -and $read.http -lt 300 -and $status -eq 'synced' -and $originMatches -and $destinationMatches -and $numberPresent
+  $routing = if ($null -ne $body -and $body.PSObject.Properties['routing']) { $body.routing } else { $null }
+  $routingMatches = $null -ne $routing -and $routing.PSObject.Properties['origin_tenant_name'] -and $routing.PSObject.Properties['destination_tenant_name'] -and
+    "$($routing.origin_tenant_name)" -ceq "$($data.tenant)" -and "$($routing.destination_tenant_name)" -ceq "$($data.destination_tenant)"
+  $recordId = if ($null -ne $body -and $body.PSObject.Properties['_id']) { "$($body._id)" } else { $null }
+  $destinationConflict = $null -ne $destination -and $destination.PSObject.Properties['origin_order_number'] -and
+    -not [string]::IsNullOrWhiteSpace("$($destination.origin_order_number)") -and -not $destinationMatches
+  $exists = $read.http -ge 200 -and $read.http -lt 300 -and $originMatches -and $routingMatches -and
+    -not [string]::IsNullOrWhiteSpace($recordId) -and -not $destinationConflict
+  $parseError = $read.PSObject.Properties['parse_error'] -and $read.parse_error
+  $confirmed = $confirmed -and -not $parseError -and ($null -eq $routing -or $routingMatches)
+  $exists = $exists -and -not $parseError
   $data | Add-Member creation_check ([pscustomobject]@{
     checked_at = (Get-Date).ToUniversalTime().ToString('o')
     http = $read.http
@@ -462,13 +473,16 @@ function Confirm-DestinationCreation($item, $token, $cacheDir, $index) {
     destination_matches = [bool]$destinationMatches
     destination_number_present = [bool]$numberPresent
     confirmed = [bool]$confirmed
+    exists = [bool]($exists -or $confirmed)
+    routing_matches = [bool]$routingMatches
   }) -Force
   Write-DeliveryItem $item.file $data
-  if (-not $confirmed) { return $false }
+  if (-not $confirmed -and -not $exists) { return $false }
   $order = [pscustomobject]@{order_number=$data.order_number; updated_date=$data.source_updated; progress='assigned'}
   $hash = Get-RequestHash $data.base_url $request $data.tenant $data.destination_tenant
-  $proof = New-DeliveryItem $order $request $hash 'creation_confirmation' $data.base_url $cacheDir $data.tenant $data.destination_tenant 'X90' 'synced' `
-    ([pscustomobject]@{verified_by='order_get';destination_order_number=$destination.destination_order_number})
+  $proofStatus = if ($confirmed) { 'synced' } else { 'exists' }
+  $proof = New-DeliveryItem $order $request $hash 'creation_confirmation' $data.base_url $cacheDir $data.tenant $data.destination_tenant 'X90' $proofStatus `
+    ([pscustomobject]@{verified_by='order_get';order_id=$recordId;destination_order_number=if ($numberPresent) { $destination.destination_order_number } else { $null };destination_synced=[bool]$confirmed;observed_status=$status;failed_at_step=$stage})
   Write-DeliveryItem $proof.file $proof.data
   $index.created[(Get-CreatedKey $data)] = $proof
   return $true
@@ -499,7 +513,7 @@ function Send-CrossroadsDelivery(
     $creates = @($group.Group.Where({$_.data.kind -eq 'create'}))
     if (-not $confirmed -and ($creates.Count -eq 0 -or @($creates.Where({$_.data.attempted_at})).Count)) {
       if (-not $token) { $token = Get-CrossroadsToken -BaseUrl $baseUrl -TokenPath '/auth/token' -ClientId $clientId -ClientSecret $clientSecret -GrantType 'password' }
-      $confirmed = Confirm-DestinationCreation $group.Group[0] $token $cacheDir $index
+      $confirmed = Confirm-CrossroadsCreation $group.Group[0] $token $cacheDir $index
     }
     $reported = $false
     $update = @(@($group.Group) + @($index.receipts.Values) | Where-Object {
@@ -509,7 +523,7 @@ function Send-CrossroadsDelivery(
       if ($blocked) { continue }
       if ($item.data.kind -ne 'create' -and -not $confirmed) {
         if (-not $reported) {
-          [pscustomobject]@{ order_number = $item.data.order_number; kind = 'create'; http = $null; ok = $false; synced = $false; state = 'pending'; status = 'waiting_for_create'; error = 'Dependent requests await confirmed destination creation.' }
+          [pscustomobject]@{ order_number = $item.data.order_number; kind = 'create'; http = $null; ok = $false; synced = $false; state = 'pending'; status = 'waiting_for_create'; error = 'Dependent requests await confirmed Crossroads order creation.' }
           $reported = $true
         }
         continue

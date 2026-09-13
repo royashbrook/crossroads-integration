@@ -3,7 +3,7 @@ BeforeAll {
   $module = Import-Module (Join-Path $PSScriptRoot '../CrossroadsIntegration/CrossroadsIntegration.psd1') -Force -PassThru
 }
 
-Describe 'Destination creation prerequisite' {
+Describe 'Crossroads creation prerequisite' {
   BeforeEach {
     $cache = Join-Path $TestDrive ([guid]::NewGuid())
     $null = New-Item -ItemType Directory $cache
@@ -138,7 +138,7 @@ Describe 'Destination creation prerequisite' {
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $ReadOnly -and $Body.order_number -eq 'TEST1' -and -not $Body.ContainsKey('order') -and $Tenant -ceq 'SOURCE' -and $DestinationTenant -ceq 'TARGET' }
   }
 
-  It 'rejects readback proof with <problem>' -ForEach @(@{problem='wrong_order'},@{problem='no_destination'},@{problem='not_synced'}) {
+  It 'rejects incomplete legacy readback without route-verified existence: <problem>' -ForEach @(@{problem='wrong_order'},@{problem='no_destination'},@{problem='not_synced'}) {
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       $body = [pscustomobject]@{
         status='synced';origin_order=[pscustomobject]@{origin_order_number='TEST1'}
