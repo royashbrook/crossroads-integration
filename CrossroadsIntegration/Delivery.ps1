@@ -209,6 +209,16 @@ function Initialize-CrossroadsDelivery($cacheDir = (Join-Path $PWD 'cache')) {
 function Initialize-Delivery($cacheDir) {
   New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
   $index = Get-DeliveryIndex $cacheDir -Prune
+  $changed = $false
+  foreach ($item in @($index.receipts.Values) + @($index.pending)) {
+    if ($item.data.state -notin @('pending', 'rejected') -or $item.data.status -eq 'invalid_response') { continue }
+    $response = [pscustomobject]@{http=$item.data.http;data=$item.data.response}
+    if (Test-RetainedRequest $response $item.data.kind $item.data.order_number $item.data.tenant $item.data.destination_tenant) {
+      Set-DeliveryResult $item 'X90' $item.data.http 'accepted' $item.data.response $index
+      $changed = $true
+    }
+  }
+  if ($changed) { $index = Get-DeliveryIndex $cacheDir -Prune }
   foreach ($item in @($index.receipts.Values)) {
     if ($item.data.state -ne 'rejected' -or $item.data.status -ne 'pending' -or $item.data.http -lt 200 -or $item.data.http -ge 300) { continue }
     $key = Get-ReceiptKey $item.data
@@ -375,7 +385,7 @@ function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index
   $item.data.status = $status
   $item.data.response = $response
   $item.data.state = $StateNames[$stateCode]
-  $destination = $item.file -replace '\.X00\.', ".$stateCode."
+  $destination = $item.file -replace '\.X(?:00|40)\.', ".$stateCode."
   Write-DeliveryItem $destination $item.data
   if ($stateCode -eq 'X00') { return }
   Remove-Item -LiteralPath $item.file
@@ -398,7 +408,34 @@ function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index
   }
 }
 
-function Get-DeliveryResponse($response, $kind, $orderNumber) {
+function Test-RetainedRequest($response, $kind, $orderNumber, $tenant, $destinationTenant) {
+  if ($response.http -lt 200 -or $response.http -ge 300 -or
+      ($response.PSObject.Properties['parse_error'] -and $response.parse_error) -or
+      [string]::IsNullOrWhiteSpace($tenant) -or [string]::IsNullOrWhiteSpace($destinationTenant)) { return $false }
+  $data = $response.data
+  if (-not $data -or -not $data.PSObject.Properties['status'] -or $data.status -notin @('error', 'pending') -or
+      -not $data.PSObject.Properties['log'] -or -not $data.log) { return $false }
+  $log = $data.log
+  foreach ($field in @('_id', 'saga_id', 'saga_type')) {
+    if (-not $log.PSObject.Properties[$field] -or $log.$field -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($log.$field)) { return $false }
+  }
+  $types = @{update='update_order';save_bol='progress_bol';save_drop='progress_drop';status='progress_status';cancel='cancel_order'}
+  if (-not $types.ContainsKey($kind) -or $log.saga_type -cne $types[$kind]) { return $false }
+  if (-not $log.PSObject.Properties['metadata'] -or -not $log.metadata -or
+      -not $log.PSObject.Properties['routing'] -or -not $log.routing) { return $false }
+  $metadata = $log.metadata
+  foreach ($field in @('origin_order_number', 'group_id', 'crossroads_order_id')) {
+    if (-not $metadata.PSObject.Properties[$field] -or $metadata.$field -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($metadata.$field)) { return $false }
+  }
+  $routing = $log.routing
+  return $metadata.origin_order_number -ceq "$orderNumber" -and $metadata.group_id -ceq "$orderNumber" -and
+    $routing.PSObject.Properties['origin_tenant_name'] -and $routing.PSObject.Properties['destination_tenant_name'] -and
+    $routing.origin_tenant_name -ceq $tenant -and $routing.destination_tenant_name -ceq $destinationTenant
+}
+
+function Get-DeliveryResponse($response, $kind, $orderNumber, $tenant, $destinationTenant) {
   $http = if ($null -eq $response.http) { 0 } else { [int]$response.http }
   $parseError = if ($response.PSObject.Properties['parse_error']) { $response.parse_error } else { $null }
   $responseText = if ($null -eq $response.data) { '' } else { ConvertTo-Json -InputObject $response.data -Depth 12 -Compress }
@@ -419,13 +456,15 @@ function Get-DeliveryResponse($response, $kind, $orderNumber) {
     -not $parseError -and $kind -eq 'update' -and $responseText -match '(?i)order (?:has )?already been updated'
   )
   $unconfirmedCreate = $accepted -and $kind -eq 'create' -and [string]::IsNullOrWhiteSpace($responseStatus)
-  $sent = $accepted -and -not $unconfirmedCreate -and ([string]::IsNullOrWhiteSpace($responseStatus) -or $responseStatus -eq 'synced')
+  $retained = Test-RetainedRequest $response $kind $orderNumber $tenant $destinationTenant
+  $sent = $retained -or ($accepted -and -not $unconfirmedCreate -and ([string]::IsNullOrWhiteSpace($responseStatus) -or $responseStatus -eq 'synced'))
   $wrappedRetry = $responseText -match '(?i)too many requests|error code:\s*(?:408|429|5\d\d)\b|internal server error|timed? out|temporar(?:y|ily) unavailable'
   $retryable = ($accepted -and $responseStatus -eq 'pending') -or $unconfirmedCreate -or ($parseError -and $http -ge 200 -and $http -lt 300) -or $http -eq 0 -or $http -in @(401, 403, 408, 429) -or $http -ge 500 -or ($http -ge 300 -and $http -lt 400) -or $wrappedRetry
   $rejected = -not $sent -and -not $alreadyApplied -and -not $retryable
   $stateCode = if ($alreadyApplied) { 'X80' } elseif ($sent) { 'X90' } elseif ($rejected) { 'X40' } else { 'X00' }
   $status = if ($duplicate) { 'duplicate' }
     elseif ($alreadyApplied) { 'already_applied' }
+    elseif ($retained) { 'accepted' }
     elseif ($parseError) { 'invalid_response' }
     elseif ($unconfirmedCreate) { 'unconfirmed' }
     elseif (-not [string]::IsNullOrWhiteSpace($responseStatus)) { $responseStatus }
@@ -574,7 +613,7 @@ function Send-CrossroadsDelivery(
       $response = Invoke-CrossroadsRequest -BaseUrl $baseUrl -Path $item.data.path `
         -Body (Get-RequestJson $item.data) -RawJson -Token $token -Tenant $item.data.tenant `
         -DestinationTenant $item.data.destination_tenant -AllowWrite
-      $result = Get-DeliveryResponse $response $item.data.kind $item.data.order_number
+      $result = Get-DeliveryResponse $response $item.data.kind $item.data.order_number $item.data.tenant $item.data.destination_tenant
       Set-DeliveryResult $item $result.state_code $result.http $result.status $response.data $index
       if ($item.data.kind -eq 'create' -and $result.state_code -eq 'X90' -and $result.status -eq 'synced') { $created = $true; $confirmed = $true }
       $blocked = $result.state_code -eq 'X00' -or ($item.data.kind -eq 'create' -and -not $confirmed)
