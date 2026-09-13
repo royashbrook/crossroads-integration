@@ -61,16 +61,16 @@ Describe 'Delivery boundaries' {
     }
   }
 
-  It 'keeps an asynchronous pending response retryable and later sends it' {
+  It 'hands off an asynchronous pending acknowledgment without resending it' {
     Confirm-TestCreation $cache TEST1 'https://example.invalid'
     Mock Get-CrossroadsToken -ModuleName CrossroadsIntegration { 'fake' }
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=200;data=[pscustomobject]@{status='pending';message='Processing is taking longer than expected.'}} }
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $r = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
-    $r.state | Should -Be pending
-    $r.status | Should -Be pending
-    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=200;data=[pscustomobject]@{status='synced'}} }
-    (Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery).state | Should -Be sent
+    $r.state | Should -Be sent
+    $r.status | Should -Be accepted
+    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery).Count | Should -Be 0
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Exactly -Times 1
   }
 
   It 'restores previously misclassified pending acknowledgments without losing their response' {
@@ -83,10 +83,11 @@ Describe 'Delivery boundaries' {
     $data | ConvertTo-Json -Depth 64 | Set-Content $old
     Remove-Item $file
     Initialize-CrossroadsDelivery $cache
-    $restored = Get-Content $file.FullName -Raw | ConvertFrom-Json
+    $restored = Get-Content ($file.FullName -replace '\.X00\.', '.X90.') -Raw | ConvertFrom-Json
     $restored.hash | Should -Be $data.hash
     $restored.response.message | Should -Be 'Still processing'
-    $restored.state | Should -Be pending
+    $restored.state | Should -Be sent
+    $restored.status | Should -Be accepted
     Test-Path $old | Should -BeFalse
   }
 

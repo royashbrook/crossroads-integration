@@ -100,7 +100,7 @@ function Get-DeliveryIndex($cacheDir, [switch]$Prune) {
     if (-not $item.data.PSObject.Properties['payload_json']) { $oldFormat = $true }
     if ($state -ne '00') {
       $terminalItems.Add($item)
-      if ($item.data.kind -eq 'create' -and $state -eq '90' -and $item.data.status -in @('synced', 'exists')) {
+      if ($item.data.kind -eq 'create' -and $state -eq '90' -and $item.data.status -in @('synced', 'exists', 'accepted')) {
         $created[(Get-CreatedKey $item.data)] = $item
       }
       $key = Get-ReceiptKey $item.data
@@ -213,7 +213,7 @@ function Initialize-Delivery($cacheDir) {
   foreach ($item in @($index.receipts.Values) + @($index.pending)) {
     if ($item.data.state -notin @('pending', 'rejected') -or $item.data.status -eq 'invalid_response') { continue }
     $response = [pscustomobject]@{http=$item.data.http;data=$item.data.response}
-    if (Test-RetainedRequest $response $item.data.kind $item.data.order_number $item.data.tenant $item.data.destination_tenant) {
+    if (Test-ApplicationAcceptance $response $item.data.kind $item.data.order_number $item.data.tenant $item.data.destination_tenant) {
       Set-DeliveryResult $item 'X90' $item.data.http 'accepted' $item.data.response $index
       $changed = $true
     }
@@ -400,7 +400,7 @@ function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index
     }
   }
   $index.receipts[$key] = $item
-  if ($item.data.kind -eq 'create' -and $stateCode -eq 'X90' -and $status -eq 'synced') {
+  if ($item.data.kind -eq 'create' -and $stateCode -eq 'X90' -and $status -in @('synced', 'accepted')) {
     if ($index.created.ContainsKey($createdKey) -and $index.created[$createdKey].file -ne $destination) {
       Remove-Item -LiteralPath $index.created[$createdKey].file
     }
@@ -408,31 +408,30 @@ function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index
   }
 }
 
-function Test-RetainedRequest($response, $kind, $orderNumber, $tenant, $destinationTenant) {
+function Test-ApplicationAcceptance($response, $kind, $orderNumber, $tenant, $destinationTenant) {
   if ($response.http -lt 200 -or $response.http -ge 300 -or
       ($response.PSObject.Properties['parse_error'] -and $response.parse_error) -or
-      [string]::IsNullOrWhiteSpace($tenant) -or [string]::IsNullOrWhiteSpace($destinationTenant)) { return $false }
+      [string]::IsNullOrWhiteSpace($tenant) -or [string]::IsNullOrWhiteSpace($destinationTenant) -or
+      [string]::IsNullOrWhiteSpace("$orderNumber") -or $kind -notin @('create','update','save_bol','save_drop','status','cancel')) { return $false }
   $data = $response.data
-  if (-not $data -or -not $data.PSObject.Properties['status'] -or $data.status -notin @('error', 'pending') -or
-      -not $data.PSObject.Properties['log'] -or -not $data.log) { return $false }
-  $log = $data.log
-  foreach ($field in @('_id', 'saga_id', 'saga_type')) {
-    if (-not $log.PSObject.Properties[$field] -or $log.$field -isnot [string] -or
-        [string]::IsNullOrWhiteSpace($log.$field)) { return $false }
+  if (-not $data -or -not $data.PSObject.Properties['status'] -or $data.status -isnot [string] -or
+      $data.status -notin @('error','rejected','pending','requested','origin_mapped','master_mapped','destination_mapped','canceled')) { return $false }
+  # The application status is the acknowledgment; optional response context must not contradict the request.
+  $order = if ($data.PSObject.Properties['order']) { $data.order } else { $null }
+  $log = if ($data.PSObject.Properties['log']) { $data.log } else { $null }
+  $metadata = if ($log -and $log.PSObject.Properties['metadata']) { $log.metadata } else { $null }
+  $routing = if ($log -and $log.PSObject.Properties['routing']) { $log.routing } else { $null }
+  foreach ($check in @(
+    @($order, 'origin_order_number', "$orderNumber"),
+    @($metadata, 'origin_order_number', "$orderNumber"),
+    @($metadata, 'group_id', "$orderNumber"),
+    @($routing, 'origin_tenant_name', $tenant),
+    @($routing, 'destination_tenant_name', $destinationTenant)
+  )) {
+    $object, $field, $expected = $check
+    if ($null -ne $object -and $object.PSObject.Properties[$field] -and $object.$field -cne $expected) { return $false }
   }
-  $types = @{update='update_order';save_bol='progress_bol';save_drop='progress_drop';status='progress_status';cancel='cancel_order'}
-  if (-not $types.ContainsKey($kind) -or $log.saga_type -cne $types[$kind]) { return $false }
-  if (-not $log.PSObject.Properties['metadata'] -or -not $log.metadata -or
-      -not $log.PSObject.Properties['routing'] -or -not $log.routing) { return $false }
-  $metadata = $log.metadata
-  foreach ($field in @('origin_order_number', 'group_id', 'crossroads_order_id')) {
-    if (-not $metadata.PSObject.Properties[$field] -or $metadata.$field -isnot [string] -or
-        [string]::IsNullOrWhiteSpace($metadata.$field)) { return $false }
-  }
-  $routing = $log.routing
-  return $metadata.origin_order_number -ceq "$orderNumber" -and $metadata.group_id -ceq "$orderNumber" -and
-    $routing.PSObject.Properties['origin_tenant_name'] -and $routing.PSObject.Properties['destination_tenant_name'] -and
-    $routing.origin_tenant_name -ceq $tenant -and $routing.destination_tenant_name -ceq $destinationTenant
+  return $true
 }
 
 function Get-DeliveryResponse($response, $kind, $orderNumber, $tenant, $destinationTenant) {
@@ -456,7 +455,7 @@ function Get-DeliveryResponse($response, $kind, $orderNumber, $tenant, $destinat
     -not $parseError -and $kind -eq 'update' -and $responseText -match '(?i)order (?:has )?already been updated'
   )
   $unconfirmedCreate = $accepted -and $kind -eq 'create' -and [string]::IsNullOrWhiteSpace($responseStatus)
-  $retained = Test-RetainedRequest $response $kind $orderNumber $tenant $destinationTenant
+  $retained = Test-ApplicationAcceptance $response $kind $orderNumber $tenant $destinationTenant
   $sent = $retained -or ($accepted -and -not $unconfirmedCreate -and ([string]::IsNullOrWhiteSpace($responseStatus) -or $responseStatus -eq 'synced'))
   $wrappedRetry = $responseText -match '(?i)too many requests|error code:\s*(?:408|429|5\d\d)\b|internal server error|timed? out|temporar(?:y|ily) unavailable'
   $retryable = ($accepted -and $responseStatus -eq 'pending') -or $unconfirmedCreate -or ($parseError -and $http -ge 200 -and $http -lt 300) -or $http -eq 0 -or $http -in @(401, 403, 408, 429) -or $http -ge 500 -or ($http -ge 300 -and $http -lt 400) -or $wrappedRetry
@@ -615,7 +614,10 @@ function Send-CrossroadsDelivery(
         -DestinationTenant $item.data.destination_tenant -AllowWrite
       $result = Get-DeliveryResponse $response $item.data.kind $item.data.order_number $item.data.tenant $item.data.destination_tenant
       Set-DeliveryResult $item $result.state_code $result.http $result.status $response.data $index
-      if ($item.data.kind -eq 'create' -and $result.state_code -eq 'X90' -and $result.status -eq 'synced') { $created = $true; $confirmed = $true }
+      if ($item.data.kind -eq 'create' -and $result.state_code -eq 'X90' -and $result.status -in @('synced', 'accepted')) {
+        $created = $result.status -eq 'synced'
+        $confirmed = $true
+      }
       $blocked = $result.state_code -eq 'X00' -or ($item.data.kind -eq 'create' -and -not $confirmed)
       $synced = $result.state_code -in @('X80', 'X90')
       [pscustomobject]@{

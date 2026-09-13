@@ -82,15 +82,15 @@ Describe 'Crossroads existence versus downstream sync' {
     @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
   }
 
-  It 'still holds dependent requests when the current update returns an application error' {
+  It 'releases dependent requests when the current update is acknowledged with an application error' {
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($ReadOnly) { return $script:readback }
       [pscustomobject]@{http=200;data=[pscustomobject]@{status='error';message='current request failed'}}
     }
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
-    $result.status | Should -Be @('error','waiting_for_update','waiting_for_update','waiting_for_details')
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Exactly -Times 1 -ParameterFilter { $AllowWrite }
+    $result.status | Should -Be @('accepted','accepted','accepted','accepted')
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Exactly -Times 4 -ParameterFilter { $AllowWrite }
   }
 
   It 'keeps completion blocked when an independent detail is rejected' {
