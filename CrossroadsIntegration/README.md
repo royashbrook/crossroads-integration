@@ -63,7 +63,7 @@ Old object-format receipts and pending messages remain readable. Receipt lookup 
 
 CacheDir is optional on all delivery/cursor commands. Its default is the absolute `cache` path beneath the caller's current filesystem directory, evaluated on each call, never beneath the installed module. Set the working directory before running the integration. For an isolated test or another location, pass `-CacheDir $path` consistently to every delivery/cursor call. Existing positional arguments remain supported.
 
-Add-CrossroadsDelivery and Send-CrossroadsDelivery require a nonblank BaseUrl. Invalid values fail at parameter binding, before reading or writing delivery state or requesting a token.
+Public source commands require a nonblank BillTo. Receive, Add and Send require nonblank BaseUrl, Tenant and DestinationTenant values. Null, empty and whitespace-only values fail at parameter binding, before cache, SQL or HTTP work. Division remains optional on both TMW commands: omitted or empty selects all divisions for the billto. Callers requiring a particular division must configure it; there is no implicit division default.
 
 Use a separate cache directory per feed/source/tenant pair. Delivery filters tenant pairs, but a cursor belongs to one source selection, not an arbitrary mix of customers. Keep staging, cursor advancement, sends, and persistence under one serialized job. Pending files do not expire; terminal receipts expire after one day except creation/existence proof, required dependency receipts, and the latest rejected create while scoped dependent work lacks creation proof. The newest creation/existence receipt preserves the prerequisite across cleanup and later duplicate-create results. Helpers retain the existing filename and hash formats.
 

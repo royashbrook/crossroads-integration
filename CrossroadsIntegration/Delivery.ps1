@@ -282,8 +282,8 @@ function Set-CrossroadsDeliveryCursor($cacheDir = (Join-Path $PWD 'cache'), $cur
 function Add-CrossroadsDelivery($orders,
   [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$baseUrl,
   $cacheDir = (Join-Path $PWD 'cache'), $persist,
-  [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$Tenant,
-  [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$DestinationTenant) {
+  [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$Tenant,
+  [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$DestinationTenant) {
   Add-Delivery $orders $baseUrl $cacheDir $persist $Tenant $DestinationTenant (Get-DeliveryIndex $cacheDir)
 }
 
@@ -530,8 +530,8 @@ function Confirm-CrossroadsCreation($item, $token, $cacheDir, $index) {
 function Send-CrossroadsDelivery(
   [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$baseUrl,
   $clientId, $clientSecret, $cacheDir = (Join-Path $PWD 'cache'),
-  [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$Tenant,
-  [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string]$DestinationTenant) {
+  [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$Tenant,
+  [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$DestinationTenant) {
   $baseUrl = $baseUrl.TrimEnd('/')
   $index = Get-DeliveryIndex $cacheDir
   $pending = @($index.pending.Where({
