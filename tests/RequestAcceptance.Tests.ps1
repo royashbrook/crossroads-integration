@@ -16,9 +16,9 @@ BeforeAll {
 
 Describe 'Durable request acceptance' {
   It 'accepts a retained <kind> operation without claiming downstream success' -ForEach @(
-    @{kind='update'},@{kind='save_bol'},@{kind='save_drop'},@{kind='status'},@{kind='cancel'}
+    @{kind='create'},@{kind='update'},@{kind='save_bol'},@{kind='save_drop'},@{kind='status'},@{kind='cancel'}
   ) {
-    foreach ($status in @('error','pending')) {
+    foreach ($status in @('error','rejected','pending','requested','origin_mapped','master_mapped','destination_mapped','canceled')) {
       $response = New-RetainedResponse $kind $status
       $result = & $module {param($r,$k) Get-DeliveryResponse $r $k TEST1 SOURCE TARGET} $response $kind
       $result.state_code | Should -Be X90
@@ -29,24 +29,35 @@ Describe 'Durable request acceptance' {
     }
   }
 
-  It 'does not infer acceptance from <problem>' -ForEach @(
+  It 'does not require optional log evidence: <problem>' -ForEach @(
     @{problem='missing_log'},@{problem='missing_log_id'},@{problem='missing_saga_id'},@{problem='wrong_kind'},
-    @{problem='missing_metadata'},@{problem='missing_order_id'},@{problem='wrong_order'},@{problem='wrong_group'},
-    @{problem='missing_route'},@{problem='wrong_source'},@{problem='wrong_destination'},@{problem='route_case'},
-    @{problem='http_422'},@{problem='http_403'},@{problem='http_429'},@{problem='http_500'},
-    @{problem='timeout'},@{problem='parse_error'},@{problem='unknown_status'},@{problem='invalid_id_type'}
+    @{problem='missing_metadata'},@{problem='missing_order_id'},@{problem='missing_route'},@{problem='invalid_id_type'}
   ) {
     $response = New-RetainedResponse
     switch ($problem) {
       missing_log { $response.data.log = $null }
       missing_log_id { $response.data.log._id = '' }
       missing_saga_id { $response.data.log.saga_id = ' ' }
-      wrong_kind { $response.data.log.saga_type = 'progress_bol' }
+      wrong_kind { $response.data.log.saga_type = 'create_order' }
       missing_metadata { $response.data.log.metadata = $null }
       missing_order_id { $response.data.log.metadata.crossroads_order_id = '' }
+      missing_route { $response.data.log.routing = $null }
+      invalid_id_type { $response.data.log._id = @('id1','id2') }
+    }
+    $result = & $module {param($r) Get-DeliveryResponse $r update TEST1 SOURCE TARGET} $response
+    $result.state_code | Should -Be X90
+    $result.status | Should -Be accepted
+  }
+
+  It 'does not infer acceptance from <problem>' -ForEach @(
+    @{problem='wrong_order'},@{problem='wrong_group'},@{problem='wrong_source'},@{problem='wrong_destination'},@{problem='route_case'},
+    @{problem='http_422'},@{problem='http_403'},@{problem='http_429'},@{problem='http_500'},
+    @{problem='timeout'},@{problem='parse_error'},@{problem='unknown_status'},@{problem='status_array'},@{problem='wrong_returned_order'}
+  ) {
+    $response = New-RetainedResponse
+    switch ($problem) {
       wrong_order { $response.data.log.metadata.origin_order_number = 'OTHER' }
       wrong_group { $response.data.log.metadata.group_id = 'OTHER' }
-      missing_route { $response.data.log.routing = $null }
       wrong_source { $response.data.log.routing.origin_tenant_name = 'OTHER' }
       wrong_destination { $response.data.log.routing.destination_tenant_name = 'OTHER' }
       route_case { $response.data.log.routing.origin_tenant_name = 'source' }
@@ -57,7 +68,8 @@ Describe 'Durable request acceptance' {
       timeout { $response.http = 0 }
       parse_error { $response | Add-Member parse_error 'invalid JSON' }
       unknown_status { $response.data.status = 'unknown' }
-      invalid_id_type { $response.data.log._id = @('id1','id2') }
+      status_array { $response.data.status = @('error') }
+      wrong_returned_order { $response.data | Add-Member order ([pscustomobject]@{origin_order_number='OTHER'}) }
     }
     $result = & $module {param($r) Get-DeliveryResponse $r update TEST1 SOURCE TARGET} $response
     $result.state_code | Should -Not -Be X90
@@ -145,7 +157,7 @@ Describe 'Accepted delivery sequencing and cache reconciliation' {
   }
 
   It 'does not migrate a receipt with <problem>' -ForEach @(
-    @{problem='wrong_route'},@{problem='invalid_response'},@{problem='failed_http'},@{problem='missing_log'}
+    @{problem='wrong_route'},@{problem='invalid_response'},@{problem='failed_http'},@{problem='unknown_status'}
   ) {
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $file = Get-ChildItem $cache -Filter '*.R20.X00.*.json'
@@ -157,7 +169,7 @@ Describe 'Accepted delivery sequencing and cache reconciliation' {
       wrong_route { $data.response.log.routing.destination_tenant_name = 'OTHER' }
       invalid_response { $data.status = 'invalid_response' }
       failed_http { $data.http = 503 }
-      missing_log { $data.response.log = $null }
+      unknown_status { $data.response.status = 'unknown' }
     }
     & $module {param($p,$d) Write-DeliveryItem $p $d} $file.FullName $data
     Initialize-CrossroadsDelivery $cache
@@ -165,12 +177,51 @@ Describe 'Accepted delivery sequencing and cache reconciliation' {
     Test-Path $file.FullName | Should -BeTrue
   }
 
-  It 'keeps creation on the existing strict gate even with a retained-operation log' {
-    $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"order_number":"TEST1"}'})
+  It 'accepts a create processing error without a log and sends its dependents in the same pass' {
+    $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"order_number":"TEST1"}'}) + $order.requests
+    foreach ($response in $script:responses.Values) { $response.data.log = $null }
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
-    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].state | Should -Be rejected
+    $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
+    $result.kind | Should -Be @('create','update','save_bol','save_drop','status')
+    $result.status | Should -Be @('accepted','accepted','accepted','accepted','accepted')
     Initialize-CrossroadsDelivery $cache
-    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
+    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 1
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 5 -Exactly -ParameterFilter { $AllowWrite }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $ReadOnly }
+  }
+
+  It 'migrates a logless create without IO and keeps the creation prerequisite after terminal cleanup' {
+    $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"order_number":"TEST1"}'}) + $order.requests
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $file = Get-ChildItem $cache -Filter '*.R10.X00.*.json'
+    $data = Get-Content $file.FullName -Raw | ConvertFrom-Json
+    $data.state = 'rejected'; $data.status = 'error'; $data.http = 200
+    $data.response = [pscustomobject]@{status='error';message='Mapping needs repair';log=$null}
+    $data.attempt_count = 1
+    & $module {param($p,$d) Write-DeliveryItem $p $d} $file.FullName $data
+    Move-Item $file.FullName ($file.FullName -replace '\.X00\.', '.X40.')
+    Initialize-CrossroadsDelivery $cache
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0
+    Should -Invoke Get-CrossroadsToken -ModuleName CrossroadsIntegration -Times 0
+    $migrated = Get-ChildItem $cache -Filter '*.R10.X90.*.json' | Get-Content -Raw | ConvertFrom-Json
+    $migrated.status | Should -Be accepted
+    $migrated.response.message | Should -Be 'Mapping needs repair'
+    $migrated.attempt_count | Should -Be 1
+    $migrated.hash | Should -Be $data.hash
+    $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
+    $result.kind | Should -Be @('update','save_bol','save_drop','status')
+    Get-ChildItem $cache -Filter '*.X90.*.json' | ForEach-Object { $_.LastWriteTime = (Get-Date).AddDays(-30) }
+    Initialize-CrossroadsDelivery $cache
+    @(Get-ChildItem $cache -Filter '*.json').Count | Should -Be 1
+    $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 4 -Exactly -ParameterFilter { $AllowWrite }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $ReadOnly }
+    $order.updated_date = '2026-09-09T12:00:00'
+    $order.requests = @([pscustomobject]@{kind='update';path='/v1/order/update';message_key='update';payload_json='{"order":{"order_number":"TEST1","note":"new"}}'})
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].status | Should -Be accepted
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $ReadOnly }
   }
 }

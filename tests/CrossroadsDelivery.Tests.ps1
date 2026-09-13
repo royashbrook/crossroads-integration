@@ -79,7 +79,7 @@ Describe 'Crossroads delivery' {
     @(Get-ChildItem $script:cache -Filter '*.X00.*.json').Count | Should -Be 0
   }
 
-  It 'retries destination rate limits wrapped in HTTP 200' {
+  It 'hands off acknowledged downstream rate limits without replaying them' {
     $script:fail = $true
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($script:fail) {
@@ -97,9 +97,9 @@ Describe 'Crossroads delivery' {
     $script:fail = $false
     $second = @(Send-CrossroadsDelivery 'http://localhost:8808' test test $script:cache @delivery)
 
-    $first.Count | Should -Be 1
-    $first[0].state | Should -Be 'pending'
-    $second.Count | Should -Be 3
+    $first.Count | Should -Be 3
+    $first.status | Should -Be @('accepted','accepted','accepted')
+    $second.Count | Should -Be 0
     @(Get-ChildItem $script:cache -Filter '*.X00.*.json').Count | Should -Be 0
   }
 
@@ -165,7 +165,7 @@ Describe 'Crossroads delivery' {
     (Get-Content $receipt.FullName -Raw | ConvertFrom-Json).response.detail | Should -Be $Detail
   }
 
-  It 'does not treat an already-loaded supply rejection as delivered' {
+  It 'hands off an already-loaded supply error and preserves its response' {
     Confirm-TestCreation $script:cache '900001'
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') {
@@ -188,17 +188,17 @@ Describe 'Crossroads delivery' {
     $results = @(Send-CrossroadsDelivery 'http://localhost:8808' test test $script:cache @delivery)
     $update = $results.Where({$_.kind -eq 'update'})[0]
 
-    $update.synced | Should -BeFalse
-    $update.status | Should -Be 'error'
+    $update.synced | Should -BeTrue
+    $update.status | Should -Be 'accepted'
     @(Get-ChildItem $script:cache -Filter '*.R20.X00.*.json').Count | Should -Be 0
-    $receipt = @(Get-ChildItem $script:cache -Filter '*.R20.X40.*.json')
+    $receipt = @(Get-ChildItem $script:cache -Filter '*.R20.X90.*.json')
     $receipt.Count | Should -Be 1
-    (Get-Content $receipt[0].FullName -Raw | ConvertFrom-Json).state | Should -Be 'rejected'
-    $results[-1].status | Should -Be waiting_for_update
-    @(Add-CrossroadsDelivery $order 'http://localhost:8808' $script:cache $true @delivery).Count | Should -Be 1
+    (Get-Content $receipt[0].FullName -Raw | ConvertFrom-Json).response.status | Should -Be 'error'
+    $results[-1].status | Should -Be synced
+    @(Add-CrossroadsDelivery $order 'http://localhost:8808' $script:cache $true @delivery).Count | Should -Be 0
   }
 
-  It 'records update rejections and holds dependent requests' {
+  It 'records update handoff and releases dependent requests on application errors' {
     Confirm-TestCreation $script:cache '900001'
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') {
@@ -212,14 +212,14 @@ Describe 'Crossroads delivery' {
     $results = @(Send-CrossroadsDelivery 'http://localhost:8808' test test $script:cache @delivery)
     $update = $results.Where({$_.kind -eq 'update'})[0]
 
-    $update.synced | Should -BeFalse
-    $update.state | Should -Be 'rejected'
+    $update.synced | Should -BeTrue
+    $update.state | Should -Be 'sent'
     $results.Count | Should -Be 3
-    @(Get-ChildItem $script:cache -Filter '*.R20.X40.*.json').Count | Should -Be 1
-    @(Get-ChildItem $script:cache -Filter '*.R90.X00.*.json').Count | Should -Be 1
-    $results[-1].status | Should -Be waiting_for_update
+    @(Get-ChildItem $script:cache -Filter '*.R20.X40.*.json').Count | Should -Be 0
+    @(Get-ChildItem $script:cache -Filter '*.R90.X00.*.json').Count | Should -Be 0
+    $results[-1].status | Should -Be accepted
     @(Get-ChildItem $script:cache -Filter '*.R20.X80.*.json').Count | Should -Be 0
-    @(Get-ChildItem $script:cache -Filter '*.R20.X90.*.json').Count | Should -Be 0
+    @(Get-ChildItem $script:cache -Filter '*.R20.X90.*.json').Count | Should -Be 1
   }
 
   It 'sends independent drops but holds completion after a rejected BOL' {
