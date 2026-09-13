@@ -100,7 +100,7 @@ function Get-DeliveryIndex($cacheDir, [switch]$Prune) {
     if (-not $item.data.PSObject.Properties['payload_json']) { $oldFormat = $true }
     if ($state -ne '00') {
       $terminalItems.Add($item)
-      if ($item.data.kind -eq 'create' -and $state -eq '90' -and $item.data.status -in @('synced', 'exists', 'accepted')) {
+      if ($item.data.kind -eq 'create' -and $state -eq '90' -and $item.data.status -in @('synced', 'exists')) {
         $created[(Get-CreatedKey $item.data)] = $item
       }
       $key = Get-ReceiptKey $item.data
@@ -400,7 +400,7 @@ function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index
     }
   }
   $index.receipts[$key] = $item
-  if ($item.data.kind -eq 'create' -and $stateCode -eq 'X90' -and $status -in @('synced', 'accepted')) {
+  if ($item.data.kind -eq 'create' -and $stateCode -eq 'X90' -and $status -eq 'synced') {
     if ($index.created.ContainsKey($createdKey) -and $index.created[$createdKey].file -ne $destination) {
       Remove-Item -LiteralPath $index.created[$createdKey].file
     }
@@ -420,7 +420,7 @@ function Test-RetainedRequest($response, $kind, $orderNumber, $tenant, $destinat
     if (-not $log.PSObject.Properties[$field] -or $log.$field -isnot [string] -or
         [string]::IsNullOrWhiteSpace($log.$field)) { return $false }
   }
-  $types = @{create='create_order';update='update_order';save_bol='progress_bol';save_drop='progress_drop';status='progress_status';cancel='cancel_order'}
+  $types = @{update='update_order';save_bol='progress_bol';save_drop='progress_drop';status='progress_status';cancel='cancel_order'}
   if (-not $types.ContainsKey($kind) -or $log.saga_type -cne $types[$kind]) { return $false }
   if (-not $log.PSObject.Properties['metadata'] -or -not $log.metadata -or
       -not $log.PSObject.Properties['routing'] -or -not $log.routing) { return $false }
@@ -615,7 +615,7 @@ function Send-CrossroadsDelivery(
         -DestinationTenant $item.data.destination_tenant -AllowWrite
       $result = Get-DeliveryResponse $response $item.data.kind $item.data.order_number $item.data.tenant $item.data.destination_tenant
       Set-DeliveryResult $item $result.state_code $result.http $result.status $response.data $index
-      if ($item.data.kind -eq 'create' -and $result.state_code -eq 'X90' -and $result.status -in @('synced', 'accepted')) { $created = $true; $confirmed = $true }
+      if ($item.data.kind -eq 'create' -and $result.state_code -eq 'X90' -and $result.status -eq 'synced') { $created = $true; $confirmed = $true }
       $blocked = $result.state_code -eq 'X00' -or ($item.data.kind -eq 'create' -and -not $confirmed)
       $synced = $result.state_code -in @('X80', 'X90')
       [pscustomobject]@{

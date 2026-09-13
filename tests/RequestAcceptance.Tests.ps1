@@ -16,7 +16,7 @@ BeforeAll {
 
 Describe 'Durable request acceptance' {
   It 'accepts a retained <kind> operation without claiming downstream success' -ForEach @(
-    @{kind='create'},@{kind='update'},@{kind='save_bol'},@{kind='save_drop'},@{kind='status'},@{kind='cancel'}
+    @{kind='update'},@{kind='save_bol'},@{kind='save_drop'},@{kind='status'},@{kind='cancel'}
   ) {
     foreach ($status in @('error','pending')) {
       $response = New-RetainedResponse $kind $status
@@ -165,16 +165,12 @@ Describe 'Accepted delivery sequencing and cache reconciliation' {
     Test-Path $file.FullName | Should -BeTrue
   }
 
-  It 'retains accepted creation across cleanup without calling order get' {
+  It 'keeps creation on the existing strict gate even with a retained-operation log' {
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"order_number":"TEST1"}'})
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
-    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].status | Should -Be accepted
-    foreach ($file in Get-ChildItem $cache -File) { $file.LastWriteTime = (Get-Date).AddDays(-30) }
+    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].state | Should -Be rejected
     Initialize-CrossroadsDelivery $cache
-    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 1
-    $order.requests = @([pscustomobject]@{kind='update';path='/v1/order/update';message_key='update';payload_json='{"order_number":"TEST1"}'})
-    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
-    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].status | Should -Be accepted
+    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $ReadOnly }
   }
 }
