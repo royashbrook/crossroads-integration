@@ -163,6 +163,9 @@ function New-DeliveryItem($order, $request, $hash, $messageKey, $baseUrl, $cache
     path = $request.path
     payload_json = Get-RequestJson $request
     attempted_at = $null
+    first_attempt_at = $null
+    attempt_count = 0
+    attempt_history_complete = $true
     http = $null
     status = $status
     response = $response
@@ -223,12 +226,16 @@ function Initialize-Delivery($cacheDir) {
   $protected = @{}
   foreach ($item in $index.created.Values) { $protected[$item.file] = $true }
   $required = @{}
+  $creationBlocked = @{}
   foreach ($item in $index.pending) {
+    $key = Get-CreatedKey $item.data
+    if ($item.data.kind -ne 'create' -and -not $index.created.ContainsKey($key)) { $creationBlocked[$key] = $true }
     if (-not $item.data.PSObject.Properties['requires']) { continue }
     foreach ($hash in @($item.data.requires)) { if ($hash) { $required[$hash] = $true } }
   }
   foreach ($item in $index.receipts.Values) {
     if (@($item.hashes.Where({$required.ContainsKey($_)})).Count) { $protected[$item.file] = $true }
+    if ($item.data.kind -eq 'create' -and $item.data.state -eq 'rejected' -and $creationBlocked.ContainsKey((Get-CreatedKey $item.data))) { $protected[$item.file] = $true }
   }
   $purge = @(Get-ChildItem $cacheDir -File | Where-Object {
     ($_.Extension -eq '.cache' -or $_.Name -match '\.X(40|80|90)\.[0-9a-f]{64}\.json$') -and -not $protected.ContainsKey($_.FullName)
@@ -364,7 +371,6 @@ function Add-Delivery($orders, $baseUrl, $cacheDir, $persist, $Tenant, $Destinat
 }
 
 function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index) {
-  $item.data.attempted_at = (Get-Date).ToUniversalTime().ToString('o')
   $item.data.http = $http
   $item.data.status = $status
   $item.data.response = $response
@@ -438,19 +444,27 @@ function Confirm-DestinationCreation($item, $token, $cacheDir, $index) {
   $request = [pscustomobject]@{ kind='create'; path='/v1/order/get'; payload=@{order_number="$($data.order_number)"} }
   $read = Invoke-CrossroadsRequest -BaseUrl $data.base_url -Path $request.path -Body $request.payload `
     -Token $token -Tenant $data.tenant -DestinationTenant $data.destination_tenant -ReadOnly
-  if ($read.http -lt 200 -or $read.http -ge 300 -or $null -eq $read.data) { return $false }
   $body = $read.data
-  if (-not $body.PSObject.Properties['status'] -or $body.status -ne 'synced' -or
-      -not $body.PSObject.Properties['origin_order'] -or -not $body.PSObject.Properties['destination_order']) { return $false }
-  $origin = $body.origin_order
-  $destination = $body.destination_order
-  if ($null -eq $origin -or $null -eq $destination -or
-      -not $origin.PSObject.Properties['origin_order_number'] -or
-      -not $destination.PSObject.Properties['origin_order_number'] -or
-      -not $destination.PSObject.Properties['destination_order_number']) { return $false }
-  if ("$($origin.origin_order_number)" -cne "$($data.order_number)" -or
-      "$($destination.origin_order_number)" -cne "$($data.order_number)" -or
-      [string]::IsNullOrWhiteSpace("$($destination.destination_order_number)")) { return $false }
+  $status = if ($null -ne $body -and $body.PSObject.Properties['status']) { "$($body.status)" } else { $null }
+  $stage = if ($null -ne $body -and $body.PSObject.Properties['failed_at_step']) { "$($body.failed_at_step)" } else { $null }
+  $origin = if ($null -ne $body -and $body.PSObject.Properties['origin_order']) { $body.origin_order } else { $null }
+  $destination = if ($null -ne $body -and $body.PSObject.Properties['destination_order']) { $body.destination_order } else { $null }
+  $originMatches = $null -ne $origin -and $origin.PSObject.Properties['origin_order_number'] -and "$($origin.origin_order_number)" -ceq "$($data.order_number)"
+  $destinationMatches = $null -ne $destination -and $destination.PSObject.Properties['origin_order_number'] -and "$($destination.origin_order_number)" -ceq "$($data.order_number)"
+  $numberPresent = $null -ne $destination -and $destination.PSObject.Properties['destination_order_number'] -and -not [string]::IsNullOrWhiteSpace("$($destination.destination_order_number)")
+  $confirmed = $read.http -ge 200 -and $read.http -lt 300 -and $status -eq 'synced' -and $originMatches -and $destinationMatches -and $numberPresent
+  $data | Add-Member creation_check ([pscustomobject]@{
+    checked_at = (Get-Date).ToUniversalTime().ToString('o')
+    http = $read.http
+    status = $status
+    failed_at_step = $stage
+    origin_matches = [bool]$originMatches
+    destination_matches = [bool]$destinationMatches
+    destination_number_present = [bool]$numberPresent
+    confirmed = [bool]$confirmed
+  }) -Force
+  Write-DeliveryItem $item.file $data
+  if (-not $confirmed) { return $false }
   $order = [pscustomobject]@{order_number=$data.order_number; updated_date=$data.source_updated; progress='assigned'}
   $hash = Get-RequestHash $data.base_url $request $data.tenant $data.destination_tenant
   $proof = New-DeliveryItem $order $request $hash 'creation_confirmation' $data.base_url $cacheDir $data.tenant $data.destination_tenant 'X90' 'synced' `
@@ -532,6 +546,17 @@ function Send-CrossroadsDelivery(
         $token = Get-CrossroadsToken -BaseUrl $baseUrl -TokenPath '/auth/token' `
           -ClientId $clientId -ClientSecret $clientSecret -GrantType 'password'
       }
+      # Persist dispatch intent before I/O; a crash leaves an uncertain attempt, never an invented receipt.
+      if (-not $item.data.PSObject.Properties['attempt_count']) {
+        $item.data | Add-Member attempt_count 0
+        $item.data | Add-Member first_attempt_at $null -Force
+        $item.data | Add-Member attempt_history_complete $false -Force
+      }
+      $now = (Get-Date).ToUniversalTime().ToString('o')
+      if (-not $item.data.first_attempt_at) { $item.data.first_attempt_at = $now }
+      $item.data.attempted_at = $now
+      $item.data.attempt_count++
+      Write-DeliveryItem $item.file $item.data
       $response = Invoke-CrossroadsRequest -BaseUrl $baseUrl -Path $item.data.path `
         -Body (Get-RequestJson $item.data) -RawJson -Token $token -Tenant $item.data.tenant `
         -DestinationTenant $item.data.destination_tenant -AllowWrite
