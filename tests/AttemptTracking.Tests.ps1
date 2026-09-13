@@ -130,4 +130,30 @@ Describe 'Delivery attempt observability' {
     Initialize-CrossroadsDelivery $cache
     Test-Path $receipt.FullName | Should -BeFalse
   }
+
+  It 'does not protect a rejected create from another <field>' -ForEach @(
+    @{field='BaseUrl';value='https://other.invalid'}
+    @{field='Tenant';value='OTHER'}
+    @{field='DestinationTenant';value='OTHER'}
+  ) {
+    $create = [pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1"}'}
+    $order.requests = @($create) + $order.requests
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=422;data=[pscustomobject]@{detail='mapping missing'}} }
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
+    $other = $delivery.Clone()
+    $other[$field] = $value
+    $order.requests = @($create)
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @other
+    $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @other
+    $receipts = @(Get-ChildItem $cache -Filter '*.R10.X40.*.json')
+    $receipts.Count | Should -Be 2
+    foreach ($receipt in $receipts) { $receipt.LastWriteTime = (Get-Date).AddDays(-30) }
+    Initialize-CrossroadsDelivery $cache
+    $remaining = @(Get-ChildItem $cache -Filter '*.R10.X40.*.json' | Get-Content -Raw | ConvertFrom-Json)
+    $remaining.Count | Should -Be 1
+    $remaining[0].base_url | Should -BeExactly 'https://example.invalid'
+    $remaining[0].tenant | Should -BeExactly SOURCE
+    $remaining[0].destination_tenant | Should -BeExactly TARGET
+  }
 }
