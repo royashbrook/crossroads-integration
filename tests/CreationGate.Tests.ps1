@@ -50,7 +50,7 @@ Describe 'Crossroads creation prerequisite' {
     @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].state | Should -Be sent
   }
 
-  It 'expires ordinary sent receipts but keeps creation confirmation' {
+  It 'retains ordinary receipts for two days but keeps creation confirmation beyond expiry' {
     Confirm-TestCreation $cache TEST1 'https://example.invalid'
     $order.requests[0].kind = 'update'
     $order.requests[0].path = '/v1/order/update'
@@ -59,7 +59,13 @@ Describe 'Crossroads creation prerequisite' {
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
     $receipts = @(Get-ChildItem $cache -Filter '*.X90.*.json')
     $receipts.Count | Should -Be 2
-    foreach ($receipt in $receipts) { $receipt.LastWriteTime = (Get-Date).AddDays(-30) }
+    foreach ($receipt in $receipts) { $receipt.LastWriteTime = (Get-Date).AddHours(-47) }
+    Initialize-CrossroadsDelivery $cache
+    @(Get-ChildItem $cache -Filter '*.R20.X90.*.json').Count | Should -Be 1
+    $order.updated_date = '2026-09-09T12:00:00'
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery).Count | Should -Be 0
+    foreach ($receipt in $receipts) { $receipt.LastWriteTime = (Get-Date).AddHours(-49) }
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 1
     @(Get-ChildItem $cache -Filter '*.R20.X90.*.json').Count | Should -Be 0

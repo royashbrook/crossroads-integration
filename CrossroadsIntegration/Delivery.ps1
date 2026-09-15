@@ -252,7 +252,7 @@ function Initialize-Delivery($cacheDir) {
   })
   Push-Location $cacheDir
   try {
-    if ($purge.Count) { $null = Clear-Files ([pscustomobject]@{ keepdays = 1; purgefiles = $purge.Name -join ',' }) }
+    if ($purge.Count) { $null = Clear-Files ([pscustomobject]@{ keepdays = 2; purgefiles = $purge.Name -join ',' }) }
   }
   finally {
     Pop-Location
