@@ -11,6 +11,15 @@ SQL or another source builds complete order/request envelopes. The module stages
 
 See [usage and operating contract](CrossroadsIntegration/README.md). Credentials, tenant values, cache storage, scheduling and source selection belong to the caller. This is an unofficial community module, not a Gravitate or TMW product.
 
+The EBE/SHIPS adapter and `Send-CrossroadsDocuments` provide a separate BOL PDF
+path. The caller supplies the metadata query and a lazy PDF reader. Document
+receipts use configurable retention without changing the existing order cache.
+See the [document contract](CrossroadsIntegration/Documents.md).
+
+The document candidate requires CrossroadsClient 1.0.5. PR CI stages the exact
+client commit pinned in the workflow, not a claimed gallery release. Publish the
+client dependency before merging/releasing this module; main uses gallery packages.
+
 ## Development
 
 ```powershell

@@ -24,6 +24,16 @@ jobs:
       - name: Install test modules
         shell: pwsh
         run: Install-Module Pester,PSScriptAnalyzer,CrossroadsClient,Clear-Files -Scope CurrentUser -Force -SkipPublisherCheck
+      - uses: actions/checkout@v6
+        if: github.event_name == 'pull_request'
+        with:
+          repository: royashbrook/crossroads-client
+          ref: bf552fdcbc7d680cb5ec52779d2d364718265b03
+          path: .client-candidate
+      - name: Test the pinned client candidate (not a published release)
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: ./tests/Use-ClientCandidate.ps1 -Source .client-candidate/CrossroadsClient
       - name: Validate
         shell: pwsh
         run: |
@@ -40,6 +50,16 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: Install-Module CrossroadsClient,Clear-Files -Scope CurrentUser -Force
+      - uses: actions/checkout@v6
+        if: github.event_name == 'pull_request'
+        with:
+          repository: royashbrook/crossroads-client
+          ref: bf552fdcbc7d680cb5ec52779d2d364718265b03
+          path: .client-candidate
+      - name: Test the pinned client candidate (not a published release)
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: ./tests/Use-ClientCandidate.ps1 -Source .client-candidate/CrossroadsClient
       - name: Verify synthetic SQL projection
         shell: pwsh
         run: ./tests/Invoke-SqlProjection.ps1
