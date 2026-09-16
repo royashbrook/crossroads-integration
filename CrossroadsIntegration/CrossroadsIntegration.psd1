@@ -9,7 +9,7 @@
   PowerShellVersion = '7.5'
   CompatiblePSEditions = @('Core')
   RequiredModules = @(
-    @{ ModuleName = 'CrossroadsClient'; ModuleVersion = '1.0.3' }
+    @{ ModuleName = 'CrossroadsClient'; ModuleVersion = '1.0.5' }
     'Clear-Files'
   )
   FunctionsToExport = @(
@@ -22,6 +22,10 @@
     'Set-CrossroadsDeliveryCursor'
     'Add-CrossroadsDelivery'
     'Send-CrossroadsDelivery'
+    'Get-CrossroadsEBEData'
+    'New-CrossroadsEBESession'
+    'Read-CrossroadsEBEDocument'
+    'Send-CrossroadsDocuments'
   )
   CmdletsToExport = @()
   VariablesToExport = @()
@@ -30,6 +34,9 @@
     'CrossroadsIntegration.psd1'
     'CrossroadsIntegration.psm1'
     'Delivery.ps1'
+    'Documents.ps1'
+    'Documents.md'
+    'Adapters/EBE/EBE.ps1'
     'Adapters/TMW/TMW.ps1'
     'Adapters/TMW/Get-Source.sql'
     'Adapters/TMW/Get-Requests.sql'
