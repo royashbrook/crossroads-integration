@@ -10,11 +10,12 @@ credentials, scheduling and remote state persistence remain caller configuration
 delegates to `Get-CrossroadsSqlData`. Supply a read-only query returning one JSON
 column (`for json path`) with `document_id`, `order_number`, `bol_number`, and
 `indexed_at`. The adapter returns string IDs and `file_name = EBE-<id>.pdf`.
+Additional query columns are preserved for caller-side source-scope checks.
 Customer filtering, joins, time window and deterministic ordering belong to that
 query. Return one extra row beyond the 2,000-item limit to detect truncation;
 do not silently truncate the source to fit the budget.
 
-`New-CrossroadsEBESession` takes the configured SHIPS base URL, username and password.
+`New-CrossroadsEBESession` takes the configured SHIPS base URL and a `PSCredential`.
 `Read-CrossroadsEBEDocument` takes that session and a document ID, returning PDF bytes
 in memory only. Neither reads destination images or saves PDFs to disk.
 
@@ -28,7 +29,7 @@ $readPdf = {
   param($document)
   if (-not $source.session) {
     $source.session = New-CrossroadsEBESession -BaseUrl $imagingUrl `
-      -Username $readerName -Password $readerPassword
+      -Credential $readerCredential
   }
   Read-CrossroadsEBEDocument -Session $source.session -DocumentId $document.document_id
 }.GetNewClosure()

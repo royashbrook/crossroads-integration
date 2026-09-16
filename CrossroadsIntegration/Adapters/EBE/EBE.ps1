@@ -8,11 +8,12 @@ function Get-CrossroadsEBEData {
   )
   foreach ($row in Get-CrossroadsSqlData -SqlFile $SqlFile -ConnectionString $ConnectionString -Parameters $Parameters -Timeout $Timeout) {
     if ("$($row.document_id)" -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid EBE document ID.' }
-    [pscustomobject]@{
+    $row | Add-Member -NotePropertyMembers @{
       document_id = "$($row.document_id)"; order_number = "$($row.order_number)"
       bol_number = "$($row.bol_number)"; indexed_at = $row.indexed_at
       file_name = "EBE-$($row.document_id).pdf"
-    }
+    } -Force
+    $row
   }
 }
 
@@ -20,14 +21,14 @@ function New-CrossroadsEBESession {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][ValidateNotNullOrWhiteSpace()][string]$BaseUrl,
-    [Parameter(Mandatory)][ValidateNotNullOrWhiteSpace()][string]$Username,
-    [Parameter(Mandatory)][ValidateNotNullOrWhiteSpace()][string]$Password,
+    [Parameter(Mandatory)][pscredential]$Credential,
     [ValidateRange(1, 3600)][int]$TimeoutSec = 20
   )
+  if ([string]::IsNullOrWhiteSpace($Credential.UserName) -or $Credential.Password.Length -eq 0) { throw 'EBE credentials are required.' }
   $uri = $BaseUrl.TrimEnd('/') + '/'
   $session = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
   $login = Invoke-WebRequest -Uri $uri -WebSession $session -TimeoutSec $TimeoutSec -ErrorAction Stop
-  $form = @{ UN = $Username; PW = $Password; btnlogin = 'Log In' }
+  $form = @{ UN = $Credential.UserName; PW = $Credential.GetNetworkCredential().Password; btnlogin = 'Log In' }
   foreach ($name in '__VIEWSTATE', '__VIEWSTATEGENERATOR', '__EVENTVALIDATION') {
     $match = [regex]::Match($login.Content,
       '<input[^>]*name=["'']' + $name + '["''][^>]*value=["'']([^"'']*)["'']', 'IgnoreCase')
