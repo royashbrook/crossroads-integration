@@ -477,11 +477,11 @@ function Get-DeliveryResponse($response, $kind, $orderNumber, $tenant, $destinat
   [pscustomobject]@{ http = $http; state_code = $stateCode; status = $status; error_code = $errorCode; error = $errorMessage }
 }
 
-function Confirm-CrossroadsCreation($item, $token, $cacheDir, $index) {
+function Confirm-CrossroadsCreation($item, $token, $cacheDir, $index, $instance = @{}) {
   $data = $item.data
   $request = [pscustomobject]@{ kind='create'; path='/v1/order/get'; payload=@{order_number="$($data.order_number)"} }
   $read = Invoke-CrossroadsRequest -BaseUrl $data.base_url -Path $request.path -Body $request.payload `
-    -Token $token -Tenant $data.tenant -DestinationTenant $data.destination_tenant -ReadOnly
+    -Token $token -Tenant $data.tenant -DestinationTenant $data.destination_tenant -ReadOnly @instance
   $body = $read.data
   $status = if ($null -ne $body -and $body.PSObject.Properties['status']) { "$($body.status)" } else { $null }
   $stage = if ($null -ne $body -and $body.PSObject.Properties['failed_at_step']) { "$($body.failed_at_step)" } else { $null }
@@ -535,8 +535,11 @@ function Send-CrossroadsDelivery(
   [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$baseUrl,
   $clientId, $clientSecret, $cacheDir = (Join-Path $PWD 'cache'),
   [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$Tenant,
-  [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$DestinationTenant) {
+  [Parameter(Mandatory)] [ValidateNotNullOrWhiteSpace()] [string]$DestinationTenant,
+  [ValidateNotNullOrWhiteSpace()] [string]$OriginInstance) {
   $baseUrl = $baseUrl.TrimEnd('/')
+  $instance = @{}
+  if ($OriginInstance) { $instance.OriginInstance = $OriginInstance }
   $index = Get-DeliveryIndex $cacheDir
   $pending = @($index.pending.Where({
     $_.data.base_url.TrimEnd('/') -eq $baseUrl -and
@@ -557,7 +560,7 @@ function Send-CrossroadsDelivery(
     $creates = @($group.Group.Where({$_.data.kind -eq 'create'}))
     if (-not $confirmed -and ($creates.Count -eq 0 -or @($creates.Where({$_.data.attempted_at})).Count)) {
       if (-not $token) { $token = Get-CrossroadsToken -BaseUrl $baseUrl -TokenPath '/auth/token' -ClientId $clientId -ClientSecret $clientSecret -GrantType 'password' }
-      $confirmed = Confirm-CrossroadsCreation $group.Group[0] $token $cacheDir $index
+      $confirmed = Confirm-CrossroadsCreation $group.Group[0] $token $cacheDir $index $instance
       $notFound = $group.Group[0].data.creation_check.not_found
     }
     $reported = $false
@@ -625,7 +628,7 @@ function Send-CrossroadsDelivery(
       Write-DeliveryItem $item.file $item.data
       $response = Invoke-CrossroadsRequest -BaseUrl $baseUrl -Path $item.data.path `
         -Body (Get-RequestJson $item.data) -RawJson -Token $token -Tenant $item.data.tenant `
-        -DestinationTenant $item.data.destination_tenant -AllowWrite
+        -DestinationTenant $item.data.destination_tenant -AllowWrite @instance
       $result = Get-DeliveryResponse $response $item.data.kind $item.data.order_number $item.data.tenant $item.data.destination_tenant
       Set-DeliveryResult $item $result.state_code $result.http $result.status $response.data $index
       if ($item.data.kind -eq 'create' -and $result.state_code -eq 'X90' -and $result.status -in @('synced', 'accepted')) {

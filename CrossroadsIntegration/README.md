@@ -31,6 +31,12 @@ $results = @(Send-CrossroadsDelivery -BaseUrl $baseUrl -ClientId $clientId -Clie
 
 The example stages and sends. Use `$false` on Add-CrossroadsDelivery and omit Send-CrossroadsDelivery for a dry run. Credentials and URL are caller inputs; no customer configuration belongs in this folder.
 
+`Send-CrossroadsDelivery -OriginInstance 'source-system'` supplies the optional
+source-instance header on order writes and creation lookups. Omit it to retain
+server-side instance selection; explicitly blank values fail before I/O. Keep
+each feed/cache on one fixed source instance. This parameter does not introduce
+multi-instance cache partitioning or change existing receipt identities.
+
 Request projection materializes parsed source and eligible rows into indexed session-local temporary tables. These are discarded when the parameterized command ends; no permanent schema or server settings are changed. SQL access must permit local temporary tables in tempdb.
 
 The included adapter reads a [Trimble TMW.Suite](https://transportation.trimble.com/en/solutions/transportation-management/tmw-suite-tms) fuel-hauling database directly through SQL; it does not call a Trimble API. It assumes Eastern database event times and converts outbound times to UTC in SQL. Source `updated_date` and cursor remain database-local for filtering. It reads orderheader, stops, freightdetail, company, commodity and referencenumber. It uses LLD/LUL stops, freight-linked BOLs and commodity classes 100/200 for net-volume selection. Verify these assumptions against your installation before enabling writes. Supply a reviewed `-SqlFile` override for another timezone, schema or business convention; the transport does not require this adapter.

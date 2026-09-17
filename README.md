@@ -16,7 +16,7 @@ path. The caller supplies the metadata query and a lazy PDF reader. Document
 receipts use configurable retention without changing the existing order cache.
 See the [document contract](CrossroadsIntegration/Documents.md).
 
-The document candidate requires CrossroadsClient 1.0.5. PR CI stages the exact
+The module requires CrossroadsClient 1.0.6. PR CI stages the exact
 client commit pinned in the workflow, not a claimed gallery release. Publish the
 client dependency before merging/releasing this module; main uses gallery packages.
 
