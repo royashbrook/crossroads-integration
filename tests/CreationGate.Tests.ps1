@@ -28,6 +28,30 @@ Describe 'Crossroads creation prerequisite' {
     @(Get-ChildItem $cache -Filter '*.X00.*.json').Count | Should -Be 1
   }
 
+  It 'forwards an optional source instance on a create' {
+    $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1"}'})
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake -OriginInstance 'source-system' @delivery
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter {
+      $AllowWrite -and $OriginInstance -ceq 'source-system' -and $Path -ceq '/v1/order/create'
+    }
+  }
+
+  It 'forwards the instance on a creation lookup without inventing confirmation' {
+    $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
+    @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake -OriginInstance 'source-system' @delivery)[0].status | Should -Be waiting_for_create
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter {
+      $ReadOnly -and $OriginInstance -ceq 'source-system' -and $Path -ceq '/v1/order/get'
+    }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter {$AllowWrite}
+  }
+
+  It 'rejects a blank explicit source instance before network activity' {
+    { Send-CrossroadsDelivery -ClientId fake -ClientSecret fake -OriginInstance ' ' @delivery } | Should -Throw
+    Should -Invoke Get-CrossroadsToken -ModuleName CrossroadsIntegration -Times 0
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0
+  }
+
   It 'preserves scoped creation proof through cleanup and later duplicate receipts' {
     Confirm-TestCreation $cache TEST1 'https://example.invalid'
     $proof = Get-ChildItem $cache -Filter '*.R10.X90.*.json'

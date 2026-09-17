@@ -9,7 +9,7 @@
   PowerShellVersion = '7.5'
   CompatiblePSEditions = @('Core')
   RequiredModules = @(
-    @{ ModuleName = 'CrossroadsClient'; ModuleVersion = '1.0.5' }
+    @{ ModuleName = 'CrossroadsClient'; ModuleVersion = '1.0.6' }
     'Clear-Files'
   )
   FunctionsToExport = @(
