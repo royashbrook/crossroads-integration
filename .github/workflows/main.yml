@@ -28,7 +28,7 @@ jobs:
         if: github.event_name == 'pull_request'
         with:
           repository: royashbrook/crossroads-client
-          ref: d7def6c9d6954f6dee7236b92bd463f5d8e6f7b6
+          ref: 35f5f016dda78ecca91561b1ef52a034ce395fc8
           path: .client-candidate
       - name: Test the pinned client candidate (not a published release)
         if: github.event_name == 'pull_request'
@@ -54,7 +54,7 @@ jobs:
         if: github.event_name == 'pull_request'
         with:
           repository: royashbrook/crossroads-client
-          ref: d7def6c9d6954f6dee7236b92bd463f5d8e6f7b6
+          ref: 35f5f016dda78ecca91561b1ef52a034ce395fc8
           path: .client-candidate
       - name: Test the pinned client candidate (not a published release)
         if: github.event_name == 'pull_request'
