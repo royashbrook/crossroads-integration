@@ -122,7 +122,7 @@ Describe 'Delivery boundaries' {
     }
   }
 
-  It 'still sends update after a duplicate create' {
+  It 'still sends update when retained proof makes create unnecessary' {
     Confirm-TestCreation $cache TEST1 'https://example.invalid'
     Mock Get-CrossroadsToken -ModuleName CrossroadsIntegration { 'fake' }
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
@@ -137,8 +137,9 @@ Describe 'Delivery boundaries' {
     )
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $r = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
-    $r[0].state | Should -Be reconciled
+    $r[0].status | Should -Be not_required
     $r[1].status | Should -Be synced
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Exactly -Times 0 -ParameterFilter {$Path -eq '/v1/order/create'}
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Exactly -Times 1 -ParameterFilter {$Path -eq '/v1/order/update'}
   }
 }

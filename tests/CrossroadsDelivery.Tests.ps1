@@ -13,6 +13,9 @@ Describe 'Crossroads delivery' {
     $script:cache = Join-Path $TestDrive ([guid]::NewGuid())
     New-Item -ItemType Directory -Path $script:cache -Force | Out-Null
     Mock Get-CrossroadsToken -ModuleName CrossroadsIntegration { 'test-token' }
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail="Order not found for number: $($Body.order_number)"}}
+    }
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       [pscustomobject]@{ http = 200; data = [pscustomobject]@{ status = 'synced'; message = $null } }
     }
@@ -55,7 +58,7 @@ Describe 'Crossroads delivery' {
     @(Get-ChildItem $script:cache -Filter '*.X00.*.json').Count | Should -Be 0
     @(Get-ChildItem $script:cache -Filter '*.X90.*.json').Count | Should -Be 8
     (Get-Content (Get-ChildItem $script:cache -Filter '*.R10.X90.*.json')[0].FullName -Raw | ConvertFrom-Json).http | Should -Be 200
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 6
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 6 -Exactly -ParameterFilter { $AllowWrite }
     Should -Invoke Get-CrossroadsToken -ModuleName CrossroadsIntegration -Times 1 -ParameterFilter {
       $ClientId -eq 'test' -and $ClientSecret -eq 'test' -and $GrantType -eq 'password' -and $TokenPath -eq '/auth/token'
     }
@@ -120,7 +123,7 @@ Describe 'Crossroads delivery' {
     $second[0].status | Should -Be 'waiting_for_create'
     @(Get-ChildItem $script:cache -Filter '*.X40.*.json').Count | Should -Be 1
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $AllowWrite }
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $ReadOnly }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $ReadOnly }
   }
 
   It 'accepts only an explicit duplicate create 422' {
@@ -309,7 +312,7 @@ Describe 'Crossroads delivery' {
     $row = $rows[0] | Select-Object *
     $null = Add-CrossroadsDelivery @(ConvertTo-CrossroadsOrder @($row)) 'http://localhost:8808' $script:cache $true @delivery
     $null = Send-CrossroadsDelivery 'http://localhost:8808' test test $script:cache @delivery
-    $receipt = (Get-ChildItem $script:cache -Filter '*.R10.X90.*.json')[0]
+    $receipt = (Get-ChildItem $script:cache -Filter '*.R20.X90.*.json')[0]
     $row.volume = 4900
     $row.updated_date = ([datetime]$row.updated_date).AddMinutes(15)
     $null = Add-CrossroadsDelivery @(ConvertTo-CrossroadsOrder @($row)) 'http://localhost:8808' $script:cache $true @delivery
@@ -318,7 +321,7 @@ Describe 'Crossroads delivery' {
     }
     $null = Send-CrossroadsDelivery 'http://localhost:8808' test test $script:cache @delivery
     Test-Path $receipt.FullName | Should -BeTrue
-    @(Get-ChildItem $script:cache -Filter '*.R10.X00.*.json').Count | Should -Be 1
+    @(Get-ChildItem $script:cache -Filter '*.R20.X00.*.json').Count | Should -Be 1
   }
 
   It 'preserves valid pending JSON when writing a receipt is interrupted' {

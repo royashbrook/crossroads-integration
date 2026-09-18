@@ -64,6 +64,9 @@ Describe 'Delivery attempt observability' {
   }
 
   It 'does not count a local not-required update transition as a send' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail='Order not found for number: TEST1'}}
+    }
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1"}'}) + $order.requests
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=200;data=[pscustomobject]@{status='synced'}} }
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
@@ -72,7 +75,7 @@ Describe 'Delivery attempt observability' {
     $data.status | Should -Be not_required
     $data.attempt_count | Should -Be 0
     $data.attempted_at | Should -BeNullOrEmpty
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Exactly -Times 1
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Exactly -Times 1 -ParameterFilter { $AllowWrite }
   }
 
   It 'marks older attempt history unknown instead of inventing a lifetime count' {
@@ -116,6 +119,9 @@ Describe 'Delivery attempt observability' {
   }
 
   It 'keeps a rejected create while scoped dependents remain and releases it afterward' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail='Order not found for number: TEST1'}}
+    }
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1"}'}) + $order.requests
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=422;data=[pscustomobject]@{detail='mapping missing'}} }
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
@@ -137,6 +143,9 @@ Describe 'Delivery attempt observability' {
     @{field='DestinationTenant';value='OTHER'}
   ) {
     $create = [pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1"}'}
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail='Order not found for number: TEST1'}}
+    }
     $order.requests = @($create) + $order.requests
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=422;data=[pscustomobject]@{detail='mapping missing'}} }
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery

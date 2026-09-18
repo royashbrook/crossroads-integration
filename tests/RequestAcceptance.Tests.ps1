@@ -178,6 +178,9 @@ Describe 'Accepted delivery sequencing and cache reconciliation' {
   }
 
   It 'accepts a create processing error without a log and sends its dependents in the same pass' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail='Order not found for number: TEST1'}}
+    }
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"order_number":"TEST1"}'}) + $order.requests
     foreach ($response in $script:responses.Values) { $response.data.log = $null }
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
@@ -189,10 +192,10 @@ Describe 'Accepted delivery sequencing and cache reconciliation' {
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
     @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 1
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 5 -Exactly -ParameterFilter { $AllowWrite }
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $ReadOnly }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $ReadOnly }
   }
 
-  It 'migrates a logless create without IO and keeps the creation prerequisite after terminal cleanup' {
+  It 'migrates a logless create without IO and renews expired proof on re-entry' {
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"order_number":"TEST1"}'}) + $order.requests
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $file = Get-ChildItem $cache -Filter '*.R10.X00.*.json'
@@ -214,7 +217,7 @@ Describe 'Accepted delivery sequencing and cache reconciliation' {
     $result.kind | Should -Be @('update','save_bol','save_drop','status')
     Get-ChildItem $cache -Filter '*.X90.*.json' | ForEach-Object { $_.LastWriteTime = (Get-Date).AddDays(-30) }
     Initialize-CrossroadsDelivery $cache
-    @(Get-ChildItem $cache -Filter '*.json').Count | Should -Be 1
+    @(Get-ChildItem $cache -Filter '*.json').Count | Should -Be 0
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 4 -Exactly -ParameterFilter { $AllowWrite }
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $ReadOnly }
@@ -222,6 +225,6 @@ Describe 'Accepted delivery sequencing and cache reconciliation' {
     $order.requests = @([pscustomobject]@{kind='update';path='/v1/order/update';message_key='update';payload_json='{"order":{"order_number":"TEST1","note":"new"}}'})
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].status | Should -Be accepted
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $ReadOnly }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $ReadOnly }
   }
 }

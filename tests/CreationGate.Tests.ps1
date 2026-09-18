@@ -29,6 +29,9 @@ Describe 'Crossroads creation prerequisite' {
   }
 
   It 'forwards an optional source instance on a create' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail='Order not found for number: TEST1'}}
+    }
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1"}'})
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake -OriginInstance 'source-system' @delivery
@@ -52,10 +55,10 @@ Describe 'Crossroads creation prerequisite' {
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0
   }
 
-  It 'preserves scoped creation proof through cleanup and later duplicate receipts' {
+  It 'uses unexpired scoped proof without sending another create or suppressing updates' {
     Confirm-TestCreation $cache TEST1 'https://example.invalid'
     $proof = Get-ChildItem $cache -Filter '*.R10.X90.*.json'
-    $proof.LastWriteTime = (Get-Date).AddDays(-30)
+    $proof.LastWriteTime = (Get-Date).AddHours(-47)
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1","note":"changed"}'}) + $order.requests
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') { return [pscustomobject]@{http=422;data=[pscustomobject]@{detail="Duplicate order: An order with number 'TEST1' already exists for this tenant."}} }
@@ -64,7 +67,9 @@ Describe 'Crossroads creation prerequisite' {
     Initialize-CrossroadsDelivery $cache
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
-    $result.state | Should -Be @('reconciled','sent')
+    $result.state | Should -Be @('sent','sent')
+    $result[0].status | Should -Be not_required
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 0 -Exactly -ParameterFilter { $Path -eq '/v1/order/create' -or $ReadOnly }
     Initialize-CrossroadsDelivery $cache
     Test-Path $proof.FullName | Should -BeTrue
     $order.updated_date = '2026-09-08T12:15:00'
@@ -74,7 +79,7 @@ Describe 'Crossroads creation prerequisite' {
     @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)[0].state | Should -Be sent
   }
 
-  It 'retains ordinary receipts for two days but keeps creation confirmation beyond expiry' {
+  It 'retains both ordinary receipts and creation proof for 47 hours and expires both at 49 hours' {
     Confirm-TestCreation $cache TEST1 'https://example.invalid'
     $order.requests[0].kind = 'update'
     $order.requests[0].path = '/v1/order/update'
@@ -91,7 +96,7 @@ Describe 'Crossroads creation prerequisite' {
     @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery).Count | Should -Be 0
     foreach ($receipt in $receipts) { $receipt.LastWriteTime = (Get-Date).AddHours(-49) }
     Initialize-CrossroadsDelivery $cache
-    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 1
+    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
     @(Get-ChildItem $cache -Filter '*.R20.X90.*.json').Count | Should -Be 0
   }
 
@@ -108,6 +113,9 @@ Describe 'Crossroads creation prerequisite' {
   }
 
   It 'keeps empty create acknowledgments unconfirmed' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail='Order not found for number: TEST1'}}
+    }
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{http=200;data=$null} }
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1"}'}) + $order.requests
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
@@ -115,10 +123,13 @@ Describe 'Crossroads creation prerequisite' {
     $result.Count | Should -Be 1
     $result[0].status | Should -Be unconfirmed
     $result[0].state | Should -Be pending
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $AllowWrite }
   }
 
   It 'sends waiting work after a corrected create succeeds' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail='Order not found for number: TEST1'}}
+    }
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1","note":"bad"}'}) + $order.requests
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Body -match 'bad') { return [pscustomobject]@{http=422;data=[pscustomobject]@{detail='mapping missing'}} }
@@ -161,11 +172,11 @@ Describe 'Crossroads creation prerequisite' {
     $proof.response.verified_by | Should -Be order_get
     foreach ($file in Get-ChildItem $cache -Filter '*.json') { $file.LastWriteTime = (Get-Date).AddDays(-30) }
     Initialize-CrossroadsDelivery $cache
-    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 1
+    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
     $order.requests[0].payload_json = '{"order":{"order_number":"TEST1"},"actual":"2026-09-08T12:15:00Z"}'
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $ReadOnly -and $Body.order_number -eq 'TEST1' -and -not $Body.ContainsKey('order') -and $Tenant -ceq 'SOURCE' -and $DestinationTenant -ceq 'TARGET' }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $ReadOnly -and $Body.order_number -eq 'TEST1' -and -not $Body.ContainsKey('order') -and $Tenant -ceq 'SOURCE' -and $DestinationTenant -ceq 'TARGET' }
   }
 
   It 'rejects incomplete legacy readback without route-verified existence: <problem>' -ForEach @(@{problem='wrong_order'},@{problem='no_destination'},@{problem='not_synced'}) {
@@ -188,6 +199,12 @@ Describe 'Crossroads creation prerequisite' {
   }
 
   It 'retains required receipts and refreshes dependencies when a rejected detail is corrected' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=200;data=[pscustomobject]@{
+        _id='record-1';origin_order=[pscustomobject]@{origin_order_number='TEST1'}
+        routing=[pscustomobject]@{origin_tenant_name='SOURCE';destination_tenant_name='TARGET'}
+      }}
+    }
     Confirm-TestCreation $cache TEST1 'https://example.invalid'
     $order.progress = 'complete'
     $order.requests = @(
@@ -230,6 +247,12 @@ Describe 'Crossroads creation prerequisite' {
   }
 
   It 'holds details across runs until the current supply update succeeds' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=200;data=[pscustomobject]@{
+        _id='record-1';origin_order=[pscustomobject]@{origin_order_number='TEST1'}
+        routing=[pscustomobject]@{origin_tenant_name='SOURCE';destination_tenant_name='TARGET'}
+      }}
+    }
     Confirm-TestCreation $cache TEST1 'https://example.invalid'
     $order.progress = 'complete'
     $order.requests = @(
@@ -249,7 +272,7 @@ Describe 'Crossroads creation prerequisite' {
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.R20.X40.*.json').Count | Should -Be 1
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $AllowWrite }
     $order.updated_date = '2026-09-08T12:15:00'
     $order.requests[0].payload_json = '{"terminal":"good"}'
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
@@ -280,6 +303,9 @@ Describe 'Crossroads creation prerequisite' {
   }
 
   It 'uses a fresh create-covered update as prerequisite proof' {
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail='Order not found for number: TEST1'}}
+    }
     $order.requests = @(
       [pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1","drops":[]}'}
       [pscustomobject]@{kind='update';path='/v1/order/update';message_key='update';payload_json='{"order":{"order_number":"TEST1"},"drops":[]}'}
