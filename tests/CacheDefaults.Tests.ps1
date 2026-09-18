@@ -16,6 +16,9 @@ BeforeAll {
 Describe 'Caller cache defaults' {
   BeforeEach {
     Mock Get-CrossroadsToken -ModuleName CrossroadsIntegration { 'test-token' }
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $ReadOnly } {
+      [pscustomobject]@{http=404;data=[pscustomobject]@{detail="Order not found for number: $($Body.order_number)"}}
+    }
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       [pscustomobject]@{ http = 200; data = [pscustomobject]@{ status = 'synced' } }
     }
@@ -42,7 +45,8 @@ Describe 'Caller cache defaults' {
       }
       finally { Pop-Location }
     }
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 2 -Exactly
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $AllowWrite }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $ReadOnly }
   }
 
   It 'uses an explicit override without creating a default cache' {

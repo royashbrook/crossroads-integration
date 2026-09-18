@@ -48,10 +48,10 @@ Describe 'Crossroads existence versus downstream sync' {
     $update.attempt_count | Should -Be 1
     foreach ($file in Get-ChildItem $cache -Filter '*.json') { $file.LastWriteTime = (Get-Date).AddDays(-30) }
     Initialize-CrossroadsDelivery $cache
-    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 1
+    @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
-    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Exactly -Times 1 -ParameterFilter { $ReadOnly }
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Exactly -Times 2 -ParameterFilter { $ReadOnly }
   }
 
   It 'fails closed for <problem>' -ForEach @(

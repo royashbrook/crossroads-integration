@@ -234,7 +234,6 @@ function Initialize-Delivery($cacheDir) {
     $index.pending_by_hash[$item.data.hash] = $item
   }
   $protected = @{}
-  foreach ($item in $index.created.Values) { $protected[$item.file] = $true }
   $required = @{}
   $creationBlocked = @{}
   foreach ($item in $index.pending) {
@@ -557,8 +556,7 @@ function Send-CrossroadsDelivery(
     $created = $false
     $notFound = $false
     $confirmed = $index.created.ContainsKey((Get-CreatedKey $group.Group[0].data))
-    $creates = @($group.Group.Where({$_.data.kind -eq 'create'}))
-    if (-not $confirmed -and ($creates.Count -eq 0 -or @($creates.Where({$_.data.attempted_at})).Count)) {
+    if (-not $confirmed) {
       if (-not $token) { $token = Get-CrossroadsToken -BaseUrl $baseUrl -TokenPath '/auth/token' -ClientId $clientId -ClientSecret $clientSecret -GrantType 'password' }
       $confirmed = Confirm-CrossroadsCreation $group.Group[0] $token $cacheDir $index $instance
       $notFound = $group.Group[0].data.creation_check.not_found
@@ -569,6 +567,12 @@ function Send-CrossroadsDelivery(
     } | Sort-Object {$_.data.source_updated}) | Select-Object -Last 1
     foreach ($item in @($group.Group | Sort-Object { if ($_.data.kind -eq 'create') { 0 } else { 1 } }, { $_.data.stage_code }, { $_.data.request_code }, file)) {
       if ($blocked) { continue }
+      if ($item.data.kind -eq 'create' -and $confirmed) {
+        $item.data | Add-Member not_required_reason 'order_exists' -Force
+        Set-DeliveryResult $item 'X90' $item.data.http 'not_required' $item.data.response $index
+        [pscustomobject]@{ order_number=$item.data.order_number; kind='create'; http=$null; ok=$true; synced=$true; state='sent'; status='not_required'; error_code='order_exists'; error='' }
+        continue
+      }
       if ($item.data.kind -eq 'cancel' -and -not $confirmed -and $notFound) {
         $item.data | Add-Member creation_check $group.Group[0].data.creation_check -Force
         $item.data | Add-Member not_required_reason 'order_not_found' -Force
@@ -576,7 +580,7 @@ function Send-CrossroadsDelivery(
         [pscustomobject]@{ order_number=$item.data.order_number; kind='cancel'; http=$null; ok=$true; synced=$true; state='sent'; status='not_required'; error_code='order_not_found'; error='' }
         continue
       }
-      if ($item.data.kind -ne 'create' -and -not $confirmed) {
+      if (-not $confirmed -and ($item.data.kind -ne 'create' -or -not $notFound)) {
         if (-not $reported) {
           [pscustomobject]@{ order_number = $item.data.order_number; kind = 'create'; http = $null; ok = $false; synced = $false; state = 'pending'; status = 'waiting_for_create'; error = 'Dependent requests await confirmed Crossroads order creation.' }
           $reported = $true
