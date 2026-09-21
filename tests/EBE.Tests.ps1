@@ -19,30 +19,37 @@ Describe 'EBE source adapter' {
     Mock Get-CrossroadsSqlData -ModuleName CrossroadsIntegration { throw 'original SQL exception' }
     { Get-CrossroadsEBEData -SqlFile caller.sql -ConnectionString synthetic } | Should -Throw '*original SQL exception*'
   }
-  It 'uses a caller-configured portal and ASP.NET form tokens' {
-    Mock Invoke-WebRequest -ModuleName CrossroadsIntegration {
-      if ($Method -eq 'Post') { return [pscustomobject]@{ Content = 'signed in' } }
-      [pscustomobject]@{ Content = '<input name="__VIEWSTATE" value="a&amp;b">' }
-    }
-    $s = New-CrossroadsEBESession -BaseUrl https://images.example/portal -Credential $credential
+  It 'requires the ShipsDocuments module that owns the portal login and fetch' {
+    $manifest = Import-PowerShellDataFile "$PSScriptRoot/../CrossroadsIntegration/CrossroadsIntegration.psd1"
+    $required = @($manifest.RequiredModules | Where-Object { $_.ModuleName -eq 'ShipsDocuments' })
+    $required.Count | Should -Be 1
+    $required[0].ModuleVersion | Should -Be '1.0.0'
+  }
+  It 'opens the portal session through ShipsDocuments with the caller portal, credential and timeout' {
+    Mock New-ShipsSession -ModuleName CrossroadsIntegration { [pscustomobject]@{ BaseUrl = "$BaseUrl/"; Logins = 1 } }
+    $s = New-CrossroadsEBESession -BaseUrl https://images.example/portal -Credential $credential -TimeoutSec 33
     $s.BaseUrl | Should -Be 'https://images.example/portal/'
-    Should -Invoke Invoke-WebRequest -ModuleName CrossroadsIntegration -Times 1 -ParameterFilter {
-      $Method -eq 'Post' -and $Uri -eq 'https://images.example/portal/' -and $Body.__VIEWSTATE -eq 'a&b'
+    Should -Invoke New-ShipsSession -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter {
+      $BaseUrl -eq 'https://images.example/portal' -and $Credential.UserName -eq 'reader' -and $TimeoutSec -eq 33
     }
   }
-  It 'rejects a returned login form' {
-    Mock Invoke-WebRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{ Content = '<input name="UN"><input name="PW">' } }
-    { New-CrossroadsEBESession -BaseUrl https://images.example -Credential $credential } | Should -Throw '*authentication*'
+  It 'surfaces a refused login as the module reports it' {
+    Mock New-ShipsSession -ModuleName CrossroadsIntegration { throw 'SHIPS authentication failed.' }
+    { New-CrossroadsEBESession -BaseUrl https://images.example -Credential $credential } | Should -Throw '*authentication failed*'
   }
-  It 'reads PDF bytes into memory without a disk image' {
-    Mock Invoke-WebRequest -ModuleName CrossroadsIntegration {
-      [pscustomobject]@{ RawContentStream = [IO.MemoryStream]::new([Text.Encoding]::ASCII.GetBytes('%PDF-test')) }
-    }
-    $s = [pscustomobject]@{ BaseUrl = 'https://images.example/portal/'; Session = [Microsoft.PowerShell.Commands.WebRequestSession]::new() }
+  It 'reads PDF bytes through ShipsDocuments on the given session, as a byte array' {
+    Mock Get-ShipsDocument -ModuleName CrossroadsIntegration { ,([Text.Encoding]::ASCII.GetBytes('%PDF-test')) }
+    $s = [pscustomobject]@{ BaseUrl = 'https://images.example/portal/' }
     $bytes = Read-CrossroadsEBEDocument -DocumentId 7 -Session $s
+    $bytes | Should -BeOfType [byte]
+    $bytes.Length | Should -Be 9
     [Text.Encoding]::ASCII.GetString($bytes) | Should -Be '%PDF-test'
-    Should -Invoke Invoke-WebRequest -ModuleName CrossroadsIntegration -Times 1 -ParameterFilter {
-      $Uri -eq 'https://images.example/portal/Pages/convertFile.aspx?multiProc=True&doc_id=7'
+    Should -Invoke Get-ShipsDocument -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter {
+      $DocumentId -eq 7 -and $Session.BaseUrl -eq 'https://images.example/portal/' -and $TimeoutSec -eq 20
     }
+  }
+  It 'surfaces a non-PDF read as the module reports it' {
+    Mock Get-ShipsDocument -ModuleName CrossroadsIntegration { throw 'SHIPS document 7 returned non-PDF content.' }
+    { Read-CrossroadsEBEDocument -DocumentId 7 -Session ([pscustomobject]@{}) } | Should -Throw '*non-PDF*'
   }
 }

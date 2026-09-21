@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0
       - name: Install test modules
         shell: pwsh
-        run: Install-Module Pester,PSScriptAnalyzer,CrossroadsClient,Clear-Files -Scope CurrentUser -Force -SkipPublisherCheck
+        run: Install-Module Pester,PSScriptAnalyzer,CrossroadsClient,ShipsDocuments,Clear-Files -Scope CurrentUser -Force -SkipPublisherCheck
       - uses: actions/checkout@v6
         if: github.event_name == 'pull_request'
         with:
@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install dependencies
         shell: pwsh
-        run: Install-Module CrossroadsClient,Clear-Files -Scope CurrentUser -Force
+        run: Install-Module CrossroadsClient,ShipsDocuments,Clear-Files -Scope CurrentUser -Force
       - uses: actions/checkout@v6
         if: github.event_name == 'pull_request'
         with:
@@ -99,7 +99,7 @@ jobs:
           PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
         run: |
           $path = Join-Path $env:RUNNER_TEMP CrossroadsIntegration
-          Install-Module CrossroadsClient,Clear-Files -Scope CurrentUser -Force
+          Install-Module CrossroadsClient,ShipsDocuments,Clear-Files -Scope CurrentUser -Force
           $manifest = Import-PowerShellDataFile ./CrossroadsIntegration/CrossroadsIntegration.psd1
           foreach ($file in $manifest.FileList) {
             $target = Join-Path $path $file
