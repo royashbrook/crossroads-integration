@@ -11,7 +11,7 @@ SQL or another source builds complete order/request envelopes. The module stages
 
 See [usage and operating contract](CrossroadsIntegration/README.md). Credentials, tenant values, cache storage, scheduling and source selection belong to the caller. This is an unofficial community module, not a Gravitate or TMW product.
 
-The EBE/SHIPS adapter and `Send-CrossroadsDocuments` provide a separate BOL PDF
+The EBE/SHIPS adapter (portal access through [ShipsDocuments](https://github.com/royashbrook/ShipsDocuments)) and `Send-CrossroadsDocuments` provide a separate BOL PDF
 path. The caller supplies the metadata query and a lazy PDF reader. Document
 receipts use configurable retention without changing the existing order cache.
 See the [document contract](CrossroadsIntegration/Documents.md).

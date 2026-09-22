@@ -15,7 +15,10 @@ Customer filtering, joins, time window and deterministic ordering belong to that
 query. Return one extra row beyond the 2,000-item limit to detect truncation;
 do not silently truncate the source to fit the budget.
 
-`New-CrossroadsEBESession` takes the configured SHIPS base URL and a `PSCredential`.
+`New-CrossroadsEBESession` takes the configured SHIPS base URL and a `PSCredential`. The portal
+login and fetch are the public `ShipsDocuments` module (a required module since 1.0.20): the
+session keeps its credential and logs in again once when the portal answers a read with its
+login page, so a long batch survives the login cookie expiring.
 `Read-CrossroadsEBEDocument` takes that session and a document ID, returning PDF bytes
 in memory only. Neither reads destination images or saves PDFs to disk.
 

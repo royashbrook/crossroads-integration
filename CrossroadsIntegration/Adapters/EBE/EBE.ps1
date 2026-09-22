@@ -17,6 +17,8 @@ function Get-CrossroadsEBEData {
   }
 }
 
+# The portal login and PDF fetch live in the ShipsDocuments module; these keep the adapter's
+# names and parameters so document consumers do not change.
 function New-CrossroadsEBESession {
   [CmdletBinding()]
   param(
@@ -24,21 +26,7 @@ function New-CrossroadsEBESession {
     [Parameter(Mandatory)][pscredential]$Credential,
     [ValidateRange(1, 3600)][int]$TimeoutSec = 20
   )
-  if ([string]::IsNullOrWhiteSpace($Credential.UserName) -or $Credential.Password.Length -eq 0) { throw 'EBE credentials are required.' }
-  $uri = $BaseUrl.TrimEnd('/') + '/'
-  $session = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
-  $login = Invoke-WebRequest -Uri $uri -WebSession $session -TimeoutSec $TimeoutSec -ErrorAction Stop
-  $form = @{ UN = $Credential.UserName; PW = $Credential.GetNetworkCredential().Password; btnlogin = 'Log In' }
-  foreach ($name in '__VIEWSTATE', '__VIEWSTATEGENERATOR', '__EVENTVALIDATION') {
-    $match = [regex]::Match($login.Content,
-      '<input[^>]*name=["'']' + $name + '["''][^>]*value=["'']([^"'']*)["'']', 'IgnoreCase')
-    if ($match.Success) { $form[$name] = [Net.WebUtility]::HtmlDecode($match.Groups[1].Value) }
-  }
-  $response = Invoke-WebRequest -Uri $uri -Method Post -Body $form -WebSession $session -TimeoutSec $TimeoutSec -ErrorAction Stop
-  if ($response.Content -match 'name=["'']UN["'']' -and $response.Content -match 'name=["'']PW["'']') {
-    throw 'EBE reader authentication failed.'
-  }
-  [pscustomobject]@{ BaseUrl = $uri; Session = $session }
+  New-ShipsSession -BaseUrl $BaseUrl -Credential $Credential -TimeoutSec $TimeoutSec
 }
 
 function Read-CrossroadsEBEDocument {
@@ -48,14 +36,5 @@ function Read-CrossroadsEBEDocument {
     [Parameter(Mandatory)]$Session,
     [ValidateRange(1, 3600)][int]$TimeoutSec = 20
   )
-  $uri = $Session.BaseUrl + "Pages/convertFile.aspx?multiProc=True&doc_id=$DocumentId"
-  $response = Invoke-WebRequest -Uri $uri -WebSession $Session.Session -TimeoutSec $TimeoutSec -ErrorAction Stop
-  $memory = [IO.MemoryStream]::new()
-  try {
-    if ($response.RawContentStream.CanSeek) { $response.RawContentStream.Position = 0 }
-    $response.RawContentStream.CopyTo($memory)
-    [byte[]]$bytes = $memory.ToArray()
-    if ($bytes.Length -lt 5 -or [Text.Encoding]::ASCII.GetString($bytes, 0, 5) -cne '%PDF-') { throw 'EBE returned non-PDF content.' }
-    return ,$bytes
-  } finally { $memory.Dispose() }
+  ,(Get-ShipsDocument -DocumentId $DocumentId -Session $Session -TimeoutSec $TimeoutSec)
 }

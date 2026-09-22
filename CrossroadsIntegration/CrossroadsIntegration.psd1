@@ -10,6 +10,7 @@
   CompatiblePSEditions = @('Core')
   RequiredModules = @(
     @{ ModuleName = 'CrossroadsClient'; ModuleVersion = '1.0.6' }
+    @{ ModuleName = 'ShipsDocuments'; ModuleVersion = '1.0.0' }
     'Clear-Files'
   )
   FunctionsToExport = @(
