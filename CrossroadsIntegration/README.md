@@ -2,6 +2,56 @@
 
 Unofficial PowerShell integration module for the [Gravitate Crossroads Integration API](https://docs.gravitate.energy/docs/crossroads-api/index.html). CrossroadsClient owns HTTP. This module owns source adapters, sequencing, pending requests, and receipts. It is not affiliated with Gravitate or the TMW vendor.
 
+## Feed entry points
+
+A feed's whole `job.ps1` is an import and one call. Each call runs in the settings file's folder,
+so the log, cache and state land there. Any value written as `env:NAME` is read from that
+environment variable, so the committed file holds names, never secrets. A missing required value
+stops the run before it does anything, naming the value.
+
+```powershell
+Import-Module CrossroadsIntegration
+Invoke-CrossroadsOrders "$PSScriptRoot/settings.json"     # or Invoke-CrossroadsDocuments
+```
+
+`Invoke-CrossroadsOrders` receives TMW orders and delivers them, one cache per bill-to (`cache/<billto>`
+by default, or one shared folder named by `cache`). It logs `Start`, `Get Data: <billto>`, `Use Data`,
+`Show Results` and `End` to `yyyyMMdd.log`, and cleans up with `keepdays` and `purgefiles`.
+
+```json
+{
+  "keepdays": 10, "purgefiles": "*.log",
+  "base_url": "https://example/api", "tenant": "ORIGIN", "destination_tenant": "DEST",
+  "origin_instance": "optional",
+  "division": "DIV", "billtos": ["BILLTO"],
+  "client_id": "env:CROSSROADS_CLIENT_ID", "client_secret": "env:CROSSROADS_CLIENT_SECRET",
+  "connection_string": "env:CONNECTION_STRING"
+}
+```
+
+`Invoke-CrossroadsDocuments` reads BOL documents with the feed's `get-data.sql` and delivers them
+through `Send-CrossroadsDocuments`. Every row must be in `scope`, or nothing goes. The portal login
+happens once, on the first document that needs it. Delivery state is written to the feed's
+repository through the GitHub contents API as it happens, so a run that dies midway still leaves its
+record. `out/delivery.json` holds the run report.
+
+```json
+{
+  "keepdays": 10, "purgefiles": "*.log",
+  "base_url": "https://example/api", "tenant": "ORIGIN", "destination_tenant": "DEST", "destination_instance": "INSTANCE",
+  "client_id": "env:CROSSROADS_CLIENT_ID", "client_secret": "env:CROSSROADS_CLIENT_SECRET",
+  "connection_string": "env:EBE_CONNECTION_STRING",
+  "scope": { "billtos": ["BILLTO"], "division": "DIV" },
+  "ebe": { "base_url": "https://host/ships5web/", "username": "reader", "password": "env:EBE_READER_PASSWORD" },
+  "state": { "repository": "env:GITHUB_REPOSITORY", "token": "env:GH_TOKEN", "issue": 1 },
+  "max_uploads": 0, "max_documents": 2000, "budget_seconds": 480, "keep_days": 14
+}
+```
+
+`max_uploads` 0 means no count limit. `prior_attempts` names a folder of earlier attempt records to
+honor, and `read_legacy_state` reads the older state layout. `"dry_run": true` reads and plans, and
+uploads nothing. It needs neither `ebe` nor `state`.
+
 ## Source
 
 `Receive-CrossroadsTMWData` owns cache cleanup, cursor lookup, source retrieval, persistent staging and cursor advancement. It does not send HTTP requests. It returns newly staged local holds as result rows; normal queued requests are reported by Send. An empty source leaves the cursor and retained pending work intact.

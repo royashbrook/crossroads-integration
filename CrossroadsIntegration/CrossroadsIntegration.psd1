@@ -12,6 +12,7 @@
     @{ ModuleName = 'CrossroadsClient'; ModuleVersion = '1.0.6' }
     @{ ModuleName = 'ShipsDocuments'; ModuleVersion = '1.0.0' }
     'Clear-Files'
+    'Add-PrefixForLogging'
   )
   FunctionsToExport = @(
     'Get-CrossroadsSqlData'
@@ -27,6 +28,8 @@
     'New-CrossroadsEBESession'
     'Read-CrossroadsEBEDocument'
     'Send-CrossroadsDocuments'
+    'Invoke-CrossroadsOrders'
+    'Invoke-CrossroadsDocuments'
   )
   CmdletsToExport = @()
   VariablesToExport = @()
@@ -36,8 +39,10 @@
     'CrossroadsIntegration.psm1'
     'Delivery.ps1'
     'Documents.ps1'
+    'Jobs.ps1'
     'Documents.md'
     'Adapters/EBE/EBE.ps1'
+    'Adapters/EBE/as-json.sql'
     'Adapters/TMW/TMW.ps1'
     'Adapters/TMW/Get-Source.sql'
     'Adapters/TMW/Get-Requests.sql'
