@@ -23,7 +23,7 @@ Describe 'EBE source adapter' {
     $manifest = Import-PowerShellDataFile "$PSScriptRoot/../CrossroadsIntegration/CrossroadsIntegration.psd1"
     $required = @($manifest.RequiredModules | Where-Object { $_.ModuleName -eq 'ShipsDocuments' })
     $required.Count | Should -Be 1
-    $required[0].ModuleVersion | Should -Be '1.0.0'
+    $required[0].RequiredVersion | Should -Be '1.0.0'
   }
   It 'opens the portal session through ShipsDocuments with the caller portal, credential and timeout' {
     Mock New-ShipsSession -ModuleName CrossroadsIntegration { [pscustomobject]@{ BaseUrl = "$BaseUrl/"; Logins = 1 } }
