@@ -61,7 +61,9 @@ function Invoke-CrossroadsOrders {
       Clear-CrossroadsFeed $s
       foreach ($billTo in @($s.billtos)) {
         $cacheDir = Join-Path $s.directory ($cache -f $billTo)
-        l "Get Data: $billTo"
+        # the step lines stay exactly as the log readers know them; the bill-to rides on its own line
+        l 'Get Data'
+        if (@($s.billtos).Count -gt 1) { $billTo }
         $results = @(Receive-CrossroadsTMWData -BillTo $billTo -Division $s.division -ConnectionString $s.connection_string -CacheDir $cacheDir @route)
         l 'Use Data'
         $send = @{ ClientId = $s.client_id; ClientSecret = $s.client_secret; CacheDir = $cacheDir }
