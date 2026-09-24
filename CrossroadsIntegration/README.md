@@ -15,8 +15,9 @@ Invoke-CrossroadsOrders "$PSScriptRoot/settings.json"     # or Invoke-Crossroads
 ```
 
 `Invoke-CrossroadsOrders` receives TMW orders and delivers them, one cache per bill-to (`cache/<billto>`
-by default, or one shared folder named by `cache`). It logs `Start`, `Get Data: <billto>`, `Use Data`,
-`Show Results` and `End` to `yyyyMMdd.log`, and cleans up with `keepdays` and `purgefiles`.
+by default, or one shared folder named by `cache`). It logs `Start`, `Get Data`, `Use Data`, `Show Results`
+and `End` to `yyyyMMdd.log`, with the bill-to on its own line when there is more than one, and
+cleans up with `keepdays` and `purgefiles`.
 
 ```json
 {

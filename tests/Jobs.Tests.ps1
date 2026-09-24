@@ -40,7 +40,8 @@ Describe 'Invoke-CrossroadsOrders' {
     Should -Invoke Clear-Files -ModuleName CrossroadsIntegration -Times 1 -Exactly
     $log = Get-Log $dir
     $log | Should -Contain 'Start'
-    $log | Should -Contain 'Get Data: BBB'
+    $log | Should -Contain 'Get Data'
+    $log | Should -Contain 'BBB'
     $log | Should -Contain 'End'
     Get-Content "$dir/settings.json" -Raw | Should -Not -Match 'from-env'
   }
