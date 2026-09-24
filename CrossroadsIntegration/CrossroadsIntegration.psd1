@@ -9,10 +9,10 @@
   PowerShellVersion = '7.5'
   CompatiblePSEditions = @('Core')
   RequiredModules = @(
-    @{ ModuleName = 'CrossroadsClient'; ModuleVersion = '1.0.6' }
-    @{ ModuleName = 'ShipsDocuments'; ModuleVersion = '1.0.0' }
-    'Clear-Files'
-    'Add-PrefixForLogging'
+    @{ ModuleName = 'CrossroadsClient'; RequiredVersion = '1.0.6' }
+    @{ ModuleName = 'ShipsDocuments'; RequiredVersion = '1.0.0' }
+    @{ ModuleName = 'Clear-Files'; RequiredVersion = '1.0.0.0' }
+    @{ ModuleName = 'Add-PrefixForLogging'; RequiredVersion = '1.0.0.3' }
   )
   FunctionsToExport = @(
     'Get-CrossroadsSqlData'
