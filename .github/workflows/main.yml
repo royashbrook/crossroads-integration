@@ -18,13 +18,13 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install test modules
         shell: pwsh
-        run: Install-Module Pester,PSScriptAnalyzer,CrossroadsClient,ShipsDocuments,Clear-Files -Scope CurrentUser -Force -SkipPublisherCheck
-      - uses: actions/checkout@v6
+        run: Install-Module Pester,PSScriptAnalyzer,CrossroadsClient,ShipsDocuments,Clear-Files,Add-PrefixForLogging -Scope CurrentUser -Force -SkipPublisherCheck
+      - uses: actions/checkout@v7
         if: github.event_name == 'pull_request'
         with:
           repository: royashbrook/crossroads-client
@@ -46,11 +46,11 @@ jobs:
   sql-projection:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install dependencies
         shell: pwsh
-        run: Install-Module CrossroadsClient,ShipsDocuments,Clear-Files -Scope CurrentUser -Force
-      - uses: actions/checkout@v6
+        run: Install-Module CrossroadsClient,ShipsDocuments,Clear-Files,Add-PrefixForLogging -Scope CurrentUser -Force
+      - uses: actions/checkout@v7
         if: github.event_name == 'pull_request'
         with:
           repository: royashbrook/crossroads-client
@@ -72,7 +72,7 @@ jobs:
       group: psgallery-${{ github.sha }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Resolve version
@@ -99,7 +99,7 @@ jobs:
           PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
         run: |
           $path = Join-Path $env:RUNNER_TEMP CrossroadsIntegration
-          Install-Module CrossroadsClient,ShipsDocuments,Clear-Files -Scope CurrentUser -Force
+          Install-Module CrossroadsClient,ShipsDocuments,Clear-Files,Add-PrefixForLogging -Scope CurrentUser -Force
           $manifest = Import-PowerShellDataFile ./CrossroadsIntegration/CrossroadsIntegration.psd1
           foreach ($file in $manifest.FileList) {
             $target = Join-Path $path $file

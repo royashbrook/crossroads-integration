@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Adapters/TMW/TMW.ps1')
 . (Join-Path $PSScriptRoot 'Adapters/EBE/EBE.ps1')
 . (Join-Path $PSScriptRoot 'Documents.ps1')
+. (Join-Path $PSScriptRoot 'Jobs.ps1')
 
 function Read-CrossroadsSqlJson($reader) {
   if ($reader.FieldCount -ne 1) { throw 'SQL JSON query must return one column.' }
@@ -48,4 +49,4 @@ function Get-CrossroadsSqlData {
   }
 }
 
-Export-ModuleMember -Function Get-CrossroadsSqlData,Get-CrossroadsTMWData,Receive-CrossroadsTMWData,Get-CrossroadsDeliverySummary,Initialize-CrossroadsDelivery,Get-CrossroadsDeliveryCursor,Set-CrossroadsDeliveryCursor,Add-CrossroadsDelivery,Send-CrossroadsDelivery,Get-CrossroadsEBEData,New-CrossroadsEBESession,Read-CrossroadsEBEDocument,Send-CrossroadsDocuments
+Export-ModuleMember -Function Get-CrossroadsSqlData,Get-CrossroadsTMWData,Receive-CrossroadsTMWData,Get-CrossroadsDeliverySummary,Initialize-CrossroadsDelivery,Get-CrossroadsDeliveryCursor,Set-CrossroadsDeliveryCursor,Add-CrossroadsDelivery,Send-CrossroadsDelivery,Get-CrossroadsEBEData,New-CrossroadsEBESession,Read-CrossroadsEBEDocument,Send-CrossroadsDocuments,Invoke-CrossroadsOrders,Invoke-CrossroadsDocuments
