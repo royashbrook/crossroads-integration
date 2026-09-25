@@ -84,7 +84,7 @@ Describe 'Invoke-CrossroadsDocuments' {
     Mock Send-CrossroadsDocuments -ModuleName CrossroadsIntegration {
       $global:XrjSend = @{ Apply = [bool]$Apply; MaxUploads = $MaxUploads; MaxDocuments = $MaxDocuments; KeepDays = $KeepDays
         DestinationInstance = $DestinationInstance; StateDirectory = $StateDirectory; ReadLegacyState = [bool]$ReadLegacyState
-        PriorAttempts = @($PriorAttempts) }
+        PriorAttempts = @($PriorAttempts); PriorAttemptsIsNull = ($null -eq $PriorAttempts) }
       $pdfs = @(foreach ($document in $Documents) { & $ReadDocument $document })
       $global:XrjSend.pdfs = $pdfs
       $global:XrjSend.wrote = & $WriteState 'state/101.json' '{"a":1}' $true
@@ -140,6 +140,20 @@ Describe 'Invoke-CrossroadsDocuments' {
     Invoke-CrossroadsDocuments $path | Out-Null
     $global:XrjSend.PriorAttempts.Count | Should -Be 1
     $global:XrjSend.ReadLegacyState | Should -BeTrue
+  }
+
+  # an empty array coming out of an if/else unrolls to $null. Send's foreach skips $null, but its
+  # `$PriorAttempts | Where-Object` runs once with $_ = $null and strict mode throws on the first
+  # ready document of a feed that has no prior_attempts setting.
+  It 'hands Send an empty array, not null, when no prior attempts are configured or found' {
+    $path = Set-Settings $dir $base
+    Invoke-CrossroadsDocuments $path | Out-Null
+    $global:XrjSend.PriorAttemptsIsNull | Should -BeFalse
+
+    $null = New-Item -ItemType Directory -Force "$dir/probes/empty"
+    $path = Set-Settings $dir ($base + @{ prior_attempts = 'probes/empty' })
+    Invoke-CrossroadsDocuments $path | Out-Null
+    $global:XrjSend.PriorAttemptsIsNull | Should -BeFalse
   }
 
   It 'dry_run plans without the EBE login or state settings' {

@@ -195,10 +195,11 @@ function Send-CrossroadsDocumentRun([hashtable]$s, [Diagnostics.Stopwatch]$clock
     $documents = @($documents | Group-Object -CaseSensitive order_number, bol_number | ForEach-Object { $_.Group[0] })
     foreach ($document in $documents) { $null = $candidateKeys.Add("$($document.order_number)/$($document.bol_number)") }
     $report.bol_candidates = $documents.Count
-    $prior = if ($s.prior_attempts) {
-      @(Get-ChildItem (Join-Path $s.directory "$($s.prior_attempts)/*.json") -ErrorAction SilentlyContinue |
-        ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json })
-    } else { @() }
+    # @() around the whole if: an empty array returned from a branch unrolls to $null (see Jobs.Tests)
+    $prior = @(if ($s.prior_attempts) {
+      Get-ChildItem (Join-Path $s.directory "$($s.prior_attempts)/*.json") -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json }
+    })
     $token = Get-CrossroadsToken -BaseUrl $s.base_url -TokenPath '/auth/token' -ClientId $s.client_id `
       -ClientSecret $s.client_secret -GrantType password -TimeoutSec 15
     $budget = if ($s.budget_seconds) { [int]$s.budget_seconds } else { 480 }
