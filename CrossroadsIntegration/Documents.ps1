@@ -189,6 +189,8 @@ function Send-CrossroadsDocuments {
     [switch]$Apply
   )
   $ErrorActionPreference = 'Stop'
+  # exported, so any caller can pass $null. a null pipes through Where-Object once as $_ and strict mode throws.
+  $PriorAttempts = @($PriorAttempts | Where-Object { $null -ne $_ })
   $uri = [uri]$BaseUrl
   if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin 'http','https' -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) {
     throw 'BaseUrl must be an HTTP endpoint without credentials, query or fragment.'

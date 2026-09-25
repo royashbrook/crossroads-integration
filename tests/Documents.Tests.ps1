@@ -177,6 +177,9 @@ Describe 'Document delivery' {
     @(Send-CrossroadsDocuments @params).disposition | Should -Be 'ready'
     @(Send-CrossroadsDocuments @params -ReadLegacyState).disposition | Should -Be 'sent_cached'
   }
+  It 'treats a null prior attempts list as none for any caller' {
+    @(Send-CrossroadsDocuments @params -PriorAttempts $null).disposition | Should -Be 'ready'
+  }
   It 'honors a caller-scoped historical probe without a replay' {
     @(Send-CrossroadsDocuments @params -PriorAttempts @($doc) -Apply).disposition | Should -Be 'awaiting_readback'
     $calls.Count | Should -Be 0
