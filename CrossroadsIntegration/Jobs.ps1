@@ -141,7 +141,9 @@ function Write-CrossroadsDocumentState([string]$Path, [string]$Json, [bool]$Crea
 
 function Remove-CrossroadsDocumentState([string]$Path, [string]$ExistingJson) {
   $run = $script:DocumentRun
-  if ((Get-Content -LiteralPath (Join-Path $run.directory $Path) -Raw) -cne $ExistingJson) { throw 'State changed before removal.' }
+  # a legacy marker is an empty file, which reads as null here and arrives as '' in the parameter; both are the same nothing
+  $current = Get-Content -LiteralPath (Join-Path $run.directory $Path) -Raw
+  if ("$current" -cne "$ExistingJson") { throw 'State changed before removal.' }
   $body = @{ message = "retire document delivery state (refs #$($run.state.issue))"; branch = 'main'; sha = (Get-CrossroadsStateSha $Path) }
   $response = Invoke-CrossroadsStateRequest Delete $Path $body
   if ($response.StatusCode -ne 200) { throw "State removal returned HTTP $($response.StatusCode): $Path" }
@@ -211,7 +213,9 @@ function Send-CrossroadsDocumentRun([hashtable]$s, [Diagnostics.Stopwatch]$clock
         StateDirectory = $s.directory; PriorAttempts = $prior; KeepDays = $(if ($s.keep_days) { [int]$s.keep_days } else { 14 })
         ReadDocument = ${function:Read-CrossroadsDocumentPdf}
         WriteState = ${function:Write-CrossroadsDocumentState}; RemoveState = ${function:Remove-CrossroadsDocumentState}
-        BudgetSeconds = $remaining; MaxDocuments = $maxDocuments; MaxUploads = [int]$s.max_uploads
+        BudgetSeconds = $remaining; MaxDocuments = $maxDocuments
+        # a run uploads at most max_uploads (1000 by default, 0 for no cap); the rest go next run
+        MaxUploads = $(if ($null -ne $s.max_uploads) { [int]$s.max_uploads } else { 1000 })
         ReadLegacyState = [bool]$s.read_legacy_state; Apply = $apply
       }
       Send-CrossroadsDocuments @send | ForEach-Object { $results.Add($_) }
