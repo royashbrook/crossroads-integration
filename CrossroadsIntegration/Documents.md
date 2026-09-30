@@ -70,8 +70,9 @@ Expiry alone does not authorize a resend: remote photo metadata and outstanding
 claims still suppress it. This leaves existing order receipts and protected order
 creation evidence unchanged. Source-window coverage remains the caller's concern.
 
-`MaxUploads = 0` means no count cap. `BudgetSeconds = 480` and `MaxDocuments = 2000`
-bound each call; the clock is checked between operations, not by interrupting a
+`MaxUploads` caps the uploads per call (`Invoke-CrossroadsDocuments` passes `max_uploads`,
+1000 when the settings leave it out; 0 means no count cap). `BudgetSeconds = 480` and
+`MaxDocuments = 2000` bound each call; the clock is checked between operations, not by interrupting a
 POST. Individual SQL/HTTP requests have their own timeouts. Group output contains
 results only for inspected items; uninspected items are not failed uploads.
 

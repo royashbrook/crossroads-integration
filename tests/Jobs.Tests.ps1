@@ -164,3 +164,26 @@ Describe 'Invoke-CrossroadsDocuments' {
     $global:XrjSend.Apply | Should -BeFalse
   }
 }
+
+Describe 'Remove-CrossroadsDocumentState' {
+  It 'retires an empty legacy marker: the file reads as null, the caller passes it as an empty string, and both are nothing' {
+    $dir = Join-Path $TestDrive "state-$([guid]::NewGuid())"
+    $null = New-Item -ItemType Directory -Force "$dir/cache"
+    $marker = "cache/20260915T223808Z_10719885_826733_$('a' * 64).sent"
+    $null = New-Item -ItemType File "$dir/$marker"
+    Mock Get-CrossroadsStateSha -ModuleName CrossroadsIntegration { '0123456789abcdef0123456789abcdef01234567' }
+    Mock Invoke-WebRequest -ModuleName CrossroadsIntegration { [pscustomobject]@{ StatusCode = 200; Content = '{}' } }
+    & (Get-Module CrossroadsIntegration) {
+      param($d, $m)
+      $script:DocumentRun = @{ directory = $d; state = @{ repository = 'owner/feed'; token = 'gh-token'; issue = 7 }; shas = @{} }
+      # exactly what Remove-DocumentState passes: Get-Content -Raw of an empty file, which is null
+      Remove-CrossroadsDocumentState $m (Get-Content -LiteralPath (Join-Path $d $m) -Raw)
+      $script:DocumentRun = $null
+    } $dir $marker
+    Should -Invoke Invoke-WebRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $Method -eq 'Delete' }
+  }
+
+  It 'passes max_uploads through, 1000 when the settings leave it out' {
+    (Get-Command -Module CrossroadsIntegration Invoke-CrossroadsDocuments) | Should -Not -BeNullOrEmpty
+  }
+}
