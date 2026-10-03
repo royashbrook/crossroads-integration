@@ -82,7 +82,7 @@ Describe 'Invoke-CrossroadsDocuments' {
     Mock Get-CrossroadsToken -ModuleName CrossroadsIntegration { 'token' }
     Mock Clear-Files -ModuleName CrossroadsIntegration { }
     Mock Send-CrossroadsDocuments -ModuleName CrossroadsIntegration {
-      $global:XrjSend = @{ Apply = [bool]$Apply; MaxUploads = $MaxUploads; MaxDocuments = $MaxDocuments; KeepDays = $KeepDays
+      $global:XrjSend = @{ Apply = [bool]$Apply; MaxUploads = $MaxUploads; MaxDocuments = $MaxDocuments; KeepDays = $KeepDays; TimeoutSeconds = $TimeoutSeconds
         DestinationInstance = $DestinationInstance; StateDirectory = $StateDirectory; ReadLegacyState = [bool]$ReadLegacyState
         PriorAttempts = @($PriorAttempts); PriorAttemptsIsNull = ($null -eq $PriorAttempts) }
       $pdfs = @(foreach ($document in $Documents) { & $ReadDocument $document })
@@ -109,6 +109,8 @@ Describe 'Invoke-CrossroadsDocuments' {
     $send.DestinationInstance | Should -Be 'INST'
     $send.StateDirectory | Should -Be $dir
     $send.ReadLegacyState | Should -BeFalse
+    $send.TimeoutSeconds | Should -Be 100
+    Should -Invoke Get-CrossroadsToken -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $TimeoutSec -eq 100 }
     $send.pdfs | Should -Be @('pdf-11', 'pdf-12')
     Should -Invoke New-CrossroadsEBESession -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter {
       $BaseUrl -eq 'https://portal.example/' -and $Credential.UserName -eq 'reader' -and $Credential.GetNetworkCredential().Password -eq 'from-env-password'
@@ -124,6 +126,13 @@ Describe 'Invoke-CrossroadsDocuments' {
     $report.upload_attempts | Should -Be 1
     $report.bol_candidates | Should -Be 2
     (Get-Log $dir) | Should -Contain 'End'
+  }
+
+  It 'passes timeout_seconds to the token and to every call Send makes' {
+    $path = Set-Settings $dir ($base + @{ timeout_seconds = 45 })
+    Invoke-CrossroadsDocuments $path | Out-Null
+    $global:XrjSend.TimeoutSeconds | Should -Be 45
+    Should -Invoke Get-CrossroadsToken -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $TimeoutSec -eq 45 }
   }
 
   It 'refuses a document outside its scope before any upload' {

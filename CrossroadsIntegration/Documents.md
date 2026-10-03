@@ -73,7 +73,9 @@ creation evidence unchanged. Source-window coverage remains the caller's concern
 `MaxUploads` caps the uploads per call (`Invoke-CrossroadsDocuments` passes `max_uploads`,
 1000 when the settings leave it out; 0 means no count cap). `BudgetSeconds = 480` and
 `MaxDocuments = 2000` bound each call; the clock is checked between operations, not by interrupting a
-POST. Individual SQL/HTTP requests have their own timeouts. Group output contains
+POST. `TimeoutSeconds` (100 by default) bounds each Crossroads order read and upload;
+`Invoke-CrossroadsDocuments` passes `timeout_seconds` and uses it for the token too. SQL and EBE
+requests keep their own timeouts. A call that runs past it still stops the run. Group output contains
 results only for inspected items; uninspected items are not failed uploads.
 
 ## Ephemeral runners

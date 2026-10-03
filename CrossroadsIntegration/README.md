@@ -45,13 +45,18 @@ record. `out/delivery.json` holds the run report.
   "scope": { "billtos": ["BILLTO"], "division": "DIV" },
   "ebe": { "base_url": "https://host/ships5web/", "username": "reader", "password": "env:EBE_READER_PASSWORD" },
   "state": { "repository": "env:GITHUB_REPOSITORY", "token": "env:GH_TOKEN", "issue": 1 },
-  "max_uploads": 0, "max_documents": 2000, "budget_seconds": 480, "keep_days": 14
+  "max_uploads": 0, "max_documents": 2000, "budget_seconds": 480, "keep_days": 14, "timeout_seconds": 100
 }
 ```
 
 `max_uploads` 0 means no count limit. `prior_attempts` names a folder of earlier attempt records to
 honor, and `read_legacy_state` reads the older state layout. `"dry_run": true` reads and plans, and
 uploads nothing. It needs neither `ebe` nor `state`.
+
+`timeout_seconds` is how long each Crossroads call may take: the token, every order read, every upload.
+It defaults to 100, the default of .NET's HttpClient, which `Invoke-WebRequest` runs on. There is no
+published standard for a client timeout, so the platform's own default is the one to match. A call that
+runs past it still stops the run.
 
 ## Source
 
