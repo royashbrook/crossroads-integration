@@ -22,7 +22,7 @@ function Read-CrossroadsSettings([string]$Path) {
   $settings.directory = Split-Path $full
   # the module runs under strict mode, where reading an absent key throws; optional ones read as null
   foreach ($name in 'cache', 'origin_instance', 'keepdays', 'purgefiles', 'dry_run', 'max_uploads', 'max_documents',
-    'budget_seconds', 'keep_days', 'prior_attempts', 'read_legacy_state', 'scope', 'ebe', 'state') {
+    'budget_seconds', 'keep_days', 'prior_attempts', 'read_legacy_state', 'scope', 'ebe', 'state', 'timeout_seconds') {
     if (-not $settings.ContainsKey($name)) { $settings[$name] = $null }
   }
   $settings
@@ -202,8 +202,10 @@ function Send-CrossroadsDocumentRun([hashtable]$s, [Diagnostics.Stopwatch]$clock
       Get-ChildItem (Join-Path $s.directory "$($s.prior_attempts)/*.json") -ErrorAction SilentlyContinue |
         ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json }
     })
+    # one timeout for every Crossroads call the run makes, 100 by default (HttpClient's own default)
+    $timeout = if ($s.timeout_seconds) { [int]$s.timeout_seconds } else { 100 }
     $token = Get-CrossroadsToken -BaseUrl $s.base_url -TokenPath '/auth/token' -ClientId $s.client_id `
-      -ClientSecret $s.client_secret -GrantType password -TimeoutSec 15
+      -ClientSecret $s.client_secret -GrantType password -TimeoutSec $timeout
     $budget = if ($s.budget_seconds) { [int]$s.budget_seconds } else { 480 }
     $remaining = $budget - [int][Math]::Ceiling($clock.Elapsed.TotalSeconds)
     if ($remaining -gt 0) {
@@ -216,7 +218,7 @@ function Send-CrossroadsDocumentRun([hashtable]$s, [Diagnostics.Stopwatch]$clock
         BudgetSeconds = $remaining; MaxDocuments = $maxDocuments
         # a run uploads at most max_uploads (1000 by default, 0 for no cap); the rest go next run
         MaxUploads = $(if ($null -ne $s.max_uploads) { [int]$s.max_uploads } else { 1000 })
-        ReadLegacyState = [bool]$s.read_legacy_state; Apply = $apply
+        ReadLegacyState = [bool]$s.read_legacy_state; Apply = $apply; TimeoutSeconds = $timeout
       }
       Send-CrossroadsDocuments @send | ForEach-Object { $results.Add($_) }
     }

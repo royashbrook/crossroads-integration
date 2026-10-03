@@ -162,7 +162,7 @@ function Get-DocumentReadback($Read, $Document, $Context, [switch]$ExactFile) {
 function Read-DocumentOrder($Document, $Context, [string]$Token) {
   $read = Invoke-CrossroadsRequest -BaseUrl $Context.base_url -Path '/v1/order/get' -Token $Token `
     -Tenant $Context.tenant -DestinationTenant $Context.destination_tenant -ReadOnly -ThrowOnTransportError `
-    -Body @{ order_number = $Document.order_number } -TimeoutSec 15
+    -Body @{ order_number = $Document.order_number } -TimeoutSec $Context.timeout
   if ($read.http -in 0, 401, 403, 429 -or $read.http -ge 500) { throw "Order $($Document.order_number) read returned HTTP $($read.http)." }
   $read
 }
@@ -186,6 +186,8 @@ function Send-CrossroadsDocuments {
     [ValidateRange(1, 86400)][int]$BudgetSeconds = 480,
     [ValidateRange(1, 2000)][int]$MaxDocuments = 2000,
     [ValidateRange(0, 2000)][int]$MaxUploads = 0,
+    # each Crossroads call: every order read and every upload. 100 is HttpClient's own default
+    [ValidateRange(1, 3600)][int]$TimeoutSeconds = 100,
     [switch]$Apply
   )
   $ErrorActionPreference = 'Stop'
@@ -201,7 +203,7 @@ function Send-CrossroadsDocuments {
   foreach ($attempt in $PriorAttempts) { Assert-Document $attempt }
   $context = @{ base_url = $BaseUrl.TrimEnd('/'); tenant = $Tenant; destination_tenant = $DestinationTenant
     instance = $DestinationInstance; directory = [IO.Path]::GetFullPath($StateDirectory); keep_days = $KeepDays
-    legacy = [bool]$ReadLegacyState; write = $WriteState; remove = $RemoveState }
+    legacy = [bool]$ReadLegacyState; write = $WriteState; remove = $RemoveState; timeout = $TimeoutSeconds }
   $context.scope = Get-DocumentHash (ConvertTo-Json -InputObject @($context.base_url,$Tenant,$DestinationTenant,$DestinationInstance) -Compress)
   $documents = @($Documents | Group-Object { Get-DocumentKey $_ $context } | ForEach-Object { $_.Group[0] })
   $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -261,7 +263,7 @@ function Send-CrossroadsDocuments {
           if (Write-DocumentState $context "claims/$key.json" $claim -CreateOnly) {
             $result.upload_attempts = 1; $result.disposition = 'awaiting_readback'; $uploads++
             $response = Send-CrossroadsBolImage -BaseUrl $BaseUrl -Token $Token -Tenant $Tenant -DestinationTenant $DestinationTenant `
-              -OrderNumber $document.order_number -BolNumber $document.bol_number -FileName $document.file_name -Bytes $bytes -AllowWrite
+              -OrderNumber $document.order_number -BolNumber $document.bol_number -FileName $document.file_name -Bytes $bytes -AllowWrite -TimeoutSec $TimeoutSeconds
             $status = & { Set-StrictMode -Off; if ($response.data.status -is [string] -and
                 $response.data.status -cin @('synced','pending','requested','error','rejected')) { $response.data.status } else { 'unknown' } }
             $result | Add-Member -NotePropertyMembers @{ http = $response.http; status = $status; file_name = $document.file_name }

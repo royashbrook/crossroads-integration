@@ -59,6 +59,17 @@ Describe 'Document delivery' {
     @(Send-CrossroadsDocuments @params -Apply).Count | Should -Be 1
     Should -Invoke Send-CrossroadsBolImage -ModuleName CrossroadsIntegration -Times 1 -Exactly
   }
+  # one slow order read used to stop the run at a fixed 15 seconds; the caller sets it now
+  It 'gives every order read and upload the timeout, 100 by default' {
+    Send-CrossroadsDocuments @params -Apply | Out-Null
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $TimeoutSec -eq 100 }
+    Should -Invoke Send-CrossroadsBolImage -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $TimeoutSec -eq 100 }
+  }
+  It 'takes the timeout from the caller' {
+    Send-CrossroadsDocuments @params -Apply -TimeoutSeconds 45 | Out-Null
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $TimeoutSec -eq 45 }
+    Should -Invoke Send-CrossroadsBolImage -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $TimeoutSec -eq 45 }
+  }
   It 'waits for a missing destination order or BOL' -ForEach @('order', 'bol') {
     if ($_ -eq 'order') { $script:read.data.destination_order.destination_order_number = '' }
     else { $script:read.data.destination_order.bols = @() }
