@@ -70,6 +70,52 @@ Describe 'Document delivery' {
     Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $TimeoutSec -eq 45 }
     Should -Invoke Send-CrossroadsBolImage -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { $TimeoutSec -eq 45 }
   }
+  # one order's failed read used to stop the run, so every order behind it waited for the next run
+  It 'skips an order whose read fails with <_> and reads it again next run' -ForEach @(500, 503, 0) {
+    $script:fail = $_
+    $params.Documents = @([pscustomobject]@{ document_id = '9'; order_number = '999'; bol_number = 'B9'; file_name = 'EBE-9.pdf' }) + $params.Documents
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
+      if ($Body.order_number -eq '999') { [pscustomobject]@{ http = $script:fail; data = 'original network failure' } }
+      elseif ($script:posted) { New-ImageRead -Photo $true } else { $script:read }
+    }
+    $r = @(Send-CrossroadsDocuments @params -Apply -WarningVariable warned -WarningAction SilentlyContinue)
+    ($r | Where-Object order_number -eq '999').disposition | Should -Be 'read_failed'
+    ($r | Where-Object order_number -eq '123').disposition | Should -Be 'visible'
+    "$warned" | Should -BeLike "*Order 999*$(if ($_) { "HTTP $_" } else { 'original network failure' })*"
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -ParameterFilter { $Body.order_number -eq '999' -and -not $ThrowOnTransportError } -Times 1 -Exactly
+    Should -Invoke Send-CrossroadsBolImage -ModuleName CrossroadsIntegration -Times 1 -Exactly
+  }
+  It 'keeps a claim whose read fails and goes on' {
+    Mock Send-CrossroadsBolImage -ModuleName CrossroadsIntegration { throw 'unknown write outcome' }
+    { Send-CrossroadsDocuments @params -Apply } | Should -Throw
+    $params.Documents = @([pscustomobject]@{ document_id = '8'; order_number = '124'; bol_number = 'B1'; file_name = 'EBE-8.pdf' })
+    Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
+      if ($Body.order_number -eq '123') { [pscustomobject]@{ http = 500; data = 'failed' } } else { $script:read }
+    }
+    $r = @(Send-CrossroadsDocuments @params -Apply -WarningAction SilentlyContinue)
+    ($r | Where-Object order_number -eq '123').disposition | Should -Be 'awaiting_readback'
+    ($r | Where-Object order_number -eq '124').disposition | Should -Be 'order_unverified'
+    @(Get-ChildItem "$($params.StateDirectory)/claims/*.json").Count | Should -Be 1
+  }
+  It 'fails the run when every order read fails' {
+    $script:read = [pscustomobject]@{ http = 500; data = 'failed' }
+    $partial = [Collections.Generic.List[object]]::new()
+    { Send-CrossroadsDocuments @params -Apply -WarningAction SilentlyContinue | ForEach-Object { $partial.Add($_) } } |
+      Should -Throw '*Every order read failed*'
+    $partial.disposition | Should -Be 'read_failed'
+  }
+  It 'stops at the fifth failed read in a row' {
+    $params.Documents = @(1..7 | ForEach-Object { [pscustomobject]@{ document_id = "$_"; order_number = "10$_"; bol_number = 'B1'; file_name = "EBE-$_.pdf" } })
+    $script:read = [pscustomobject]@{ http = 500; data = 'failed' }
+    { Send-CrossroadsDocuments @params -Apply -WarningAction SilentlyContinue } | Should -Throw '*fifth read in a row*'
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 5 -Exactly
+  }
+  It 'stops at once on HTTP <_>, the token or the rate limit and not one order' -ForEach @(401, 403, 429) {
+    $params.Documents += [pscustomobject]@{ document_id = '9'; order_number = '999'; bol_number = 'B9'; file_name = 'EBE-9.pdf' }
+    $script:read = [pscustomobject]@{ http = $_; data = 'denied' }
+    { Send-CrossroadsDocuments @params -Apply } | Should -Throw "*HTTP $_*"
+    Should -Invoke Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration -Times 1 -Exactly
+  }
   It 'waits for a missing destination order or BOL' -ForEach @('order', 'bol') {
     if ($_ -eq 'order') { $script:read.data.destination_order.destination_order_number = '' }
     else { $script:read.data.destination_order.bols = @() }
