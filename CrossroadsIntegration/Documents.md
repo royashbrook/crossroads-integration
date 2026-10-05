@@ -75,8 +75,15 @@ creation evidence unchanged. Source-window coverage remains the caller's concern
 `MaxDocuments = 2000` bound each call; the clock is checked between operations, not by interrupting a
 POST. `TimeoutSeconds` (100 by default) bounds each Crossroads order read and upload;
 `Invoke-CrossroadsDocuments` passes `timeout_seconds` and uses it for the token too. SQL and EBE
-requests keep their own timeouts. A call that runs past it still stops the run. Group output contains
+requests keep their own timeouts. An upload that runs past it still stops the run. Group output contains
 results only for inspected items; uninspected items are not failed uploads.
+
+An order read that fails on the server (HTTP 5xx) or on the wire (a timeout, a dropped connection)
+skips that order with a warning. Its documents report `read_failed`, a prior claim stays
+`awaiting_readback`, and both are read again next run. HTTP 401, 403 and 429 still stop the run at
+once: they are the token or the rate limit, not one order. A fifth failed read in a row stops the run,
+and a call where every order read failed throws after its results. The readback after an upload is
+never skipped: any failure there stops the run with the claim kept.
 
 ## Ephemeral runners
 

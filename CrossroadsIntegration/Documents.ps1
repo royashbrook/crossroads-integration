@@ -130,6 +130,7 @@ function Clear-DocumentReceipts($Context) {
 function Get-DocumentReadback($Read, $Document, $Context, [switch]$ExactFile) {
   # External optional fields are checked explicitly; absent fields must fail closed.
   Set-StrictMode -Off
+  if ($null -eq $Read) { return 'read_failed' }
   $body = $Read.data
   $origin = $body.origin_order.origin_order_number
   $destination = $body.destination_order.origin_order_number
@@ -159,11 +160,21 @@ function Get-DocumentReadback($Read, $Document, $Context, [switch]$ExactFile) {
   'ready'
 }
 
-function Read-DocumentOrder($Document, $Context, [string]$Token) {
+# with -Skip, a read that fails on the server or the wire warns and returns $null, and that order is read again next run.
+# 401, 403 and 429 still stop the run (the token or the rate limit, not one order), and so does a fifth failed read in a row.
+function Read-DocumentOrder($Document, $Context, [string]$Token, [switch]$Skip) {
   $read = Invoke-CrossroadsRequest -BaseUrl $Context.base_url -Path '/v1/order/get' -Token $Token `
-    -Tenant $Context.tenant -DestinationTenant $Context.destination_tenant -ReadOnly -ThrowOnTransportError `
+    -Tenant $Context.tenant -DestinationTenant $Context.destination_tenant -ReadOnly -ThrowOnTransportError:(-not $Skip) `
     -Body @{ order_number = $Document.order_number } -TimeoutSec $Context.timeout
+  if ($Skip -and ($read.http -eq 0 -or $read.http -ge 500)) {
+    $failure = "Order $($Document.order_number) read failed: $(if ($read.http) { "HTTP $($read.http)" } else { $read.data })."
+    $Context.reads.failed++; $Context.reads.streak++
+    if ($Context.reads.streak -ge 5) { throw "$failure The fifth read in a row to fail." }
+    Write-Warning "$failure Read again next run."
+    return $null
+  }
   if ($read.http -in 0, 401, 403, 429 -or $read.http -ge 500) { throw "Order $($Document.order_number) read returned HTTP $($read.http)." }
+  $Context.reads.ok++; $Context.reads.streak = 0
   $read
 }
 
@@ -203,7 +214,8 @@ function Send-CrossroadsDocuments {
   foreach ($attempt in $PriorAttempts) { Assert-Document $attempt }
   $context = @{ base_url = $BaseUrl.TrimEnd('/'); tenant = $Tenant; destination_tenant = $DestinationTenant
     instance = $DestinationInstance; directory = [IO.Path]::GetFullPath($StateDirectory); keep_days = $KeepDays
-    legacy = [bool]$ReadLegacyState; write = $WriteState; remove = $RemoveState; timeout = $TimeoutSeconds }
+    legacy = [bool]$ReadLegacyState; write = $WriteState; remove = $RemoveState; timeout = $TimeoutSeconds
+    reads = @{ ok = 0; failed = 0; streak = 0 } }
   $context.scope = Get-DocumentHash (ConvertTo-Json -InputObject @($context.base_url,$Tenant,$DestinationTenant,$DestinationInstance) -Compress)
   $documents = @($Documents | Group-Object { Get-DocumentKey $_ $context } | ForEach-Object { $_.Group[0] })
   $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -229,7 +241,7 @@ function Send-CrossroadsDocuments {
   foreach ($key in @($claims.Keys)) {
     if ($clock.Elapsed.TotalSeconds -ge $BudgetSeconds) { break }
     $claim = $claims[$key].record
-    $read = Read-DocumentOrder $claim $context $Token
+    $read = Read-DocumentOrder $claim $context $Token -Skip
     $state = Get-DocumentReadback $read $claim $context -ExactFile
     if ($state -eq 'visible' -and $Apply) {
       Save-DocumentReceipt $claim $context
@@ -242,7 +254,7 @@ function Send-CrossroadsDocuments {
   foreach ($group in ($documents | Group-Object order_number)) {
     if ($clock.Elapsed.TotalSeconds -ge $BudgetSeconds -or $seen -ge $MaxDocuments -or ($Apply -and $MaxUploads -gt 0 -and $uploads -ge $MaxUploads)) { break }
     $read = $null
-    if (@($group.Group | Where-Object { -not (Get-DocumentReceipt $_ $context) }).Count) { $read = Read-DocumentOrder $group.Group[0] $context $Token }
+    if (@($group.Group | Where-Object { -not (Get-DocumentReceipt $_ $context) }).Count) { $read = Read-DocumentOrder $group.Group[0] $context $Token -Skip }
     foreach ($document in $group.Group) {
       if ($clock.Elapsed.TotalSeconds -ge $BudgetSeconds -or $seen -ge $MaxDocuments -or ($Apply -and $MaxUploads -gt 0 -and $uploads -ge $MaxUploads)) { break }
       $key = Get-DocumentKey $document $context
@@ -281,4 +293,5 @@ function Send-CrossroadsDocuments {
       if ($result.upload_attempts -gt 0 -and $result.disposition -ne 'visible') { throw 'Upload unresolved. No further writes this run.' }
     }
   }
+  if ($context.reads.failed -and -not $context.reads.ok) { throw "Every order read failed ($($context.reads.failed)). They are read again next run." }
 }
