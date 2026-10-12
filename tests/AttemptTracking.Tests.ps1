@@ -127,7 +127,7 @@ Describe 'Delivery attempt observability' {
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
     $receipt = Get-ChildItem $cache -Filter '*.R10.X40.*.json'
-    $receipt.LastWriteTime = (Get-Date).AddDays(-30)
+    Set-TestReceiptAge $receipt (Get-Date).AddDays(-30)
     Initialize-CrossroadsDelivery $cache
     Test-Path $receipt.FullName | Should -BeTrue
     $order.updated_date = '2026-09-08T12:15:00'
@@ -157,7 +157,7 @@ Describe 'Delivery attempt observability' {
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @other
     $receipts = @(Get-ChildItem $cache -Filter '*.R10.X40.*.json')
     $receipts.Count | Should -Be 2
-    foreach ($receipt in $receipts) { $receipt.LastWriteTime = (Get-Date).AddDays(-30) }
+    Set-TestReceiptAge $receipts (Get-Date).AddDays(-30)
     Initialize-CrossroadsDelivery $cache
     $remaining = @(Get-ChildItem $cache -Filter '*.R10.X40.*.json' | Get-Content -Raw | ConvertFrom-Json)
     $remaining.Count | Should -Be 1

@@ -38,7 +38,7 @@ Describe 'Creation after receipt expiry' {
       $null = Add-CrossroadsDelivery -Orders @($updateOnly) -Persist $true @delivery
       $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
     }
-    foreach ($file in Get-ChildItem $cache -File) { $file.LastWriteTime = (Get-Date).AddHours(-49) }
+    Set-TestReceiptAge (Get-ChildItem $cache -File) (Get-Date).AddHours(-49)
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -File).Count | Should -Be 0
     $script:calls.Clear()

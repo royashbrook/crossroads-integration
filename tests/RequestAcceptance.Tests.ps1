@@ -1,4 +1,5 @@
 BeforeAll {
+  . (Join-Path $PSScriptRoot 'Confirm-TestCreation.ps1')
   $module = Import-Module (Join-Path $PSScriptRoot '../CrossroadsIntegration/CrossroadsIntegration.psd1') -Force -PassThru
   function New-RetainedResponse($kind = 'update', $status = 'error') {
     $types = @{create='create_order';update='update_order';save_bol='progress_bol';save_drop='progress_drop';status='progress_status';cancel='cancel_order'}
@@ -215,7 +216,7 @@ Describe 'Accepted delivery sequencing and cache reconciliation' {
     $migrated.hash | Should -Be $data.hash
     $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
     $result.kind | Should -Be @('update','save_bol','save_drop','status')
-    Get-ChildItem $cache -Filter '*.X90.*.json' | ForEach-Object { $_.LastWriteTime = (Get-Date).AddDays(-30) }
+    Set-TestReceiptAge (Get-ChildItem $cache -Filter '*.X90.*.json') (Get-Date).AddDays(-30)
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.json').Count | Should -Be 0
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery

@@ -1,4 +1,5 @@
 BeforeAll {
+  . (Join-Path $PSScriptRoot 'Confirm-TestCreation.ps1')
   $module = Import-Module (Join-Path $PSScriptRoot '../CrossroadsIntegration/CrossroadsIntegration.psd1') -Force -PassThru
 }
 
@@ -121,7 +122,7 @@ Describe 'Absent-order cancellation' {
 
   It 'expires normally and sends a later cancellation if the order then exists' {
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
-    (Get-ChildItem $cache -Filter '*.R99.X90.*.json').LastWriteTime=(Get-Date).AddDays(-30)
+    Set-TestReceiptAge (Get-ChildItem $cache -Filter '*.R99.X90.*.json') (Get-Date).AddDays(-30)
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.json').Count | Should -Be 0
     $script:read=[pscustomobject]@{http=200;data=[pscustomobject]@{

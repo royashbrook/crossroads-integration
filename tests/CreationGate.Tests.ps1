@@ -58,7 +58,7 @@ Describe 'Crossroads creation prerequisite' {
   It 'uses unexpired scoped proof without sending another create or suppressing updates' {
     Confirm-TestCreation $cache TEST1 'https://example.invalid'
     $proof = Get-ChildItem $cache -Filter '*.R10.X90.*.json'
-    $proof.LastWriteTime = (Get-Date).AddHours(-47)
+    Set-TestReceiptAge $proof (Get-Date).AddHours(-47)
     $order.requests = @([pscustomobject]@{kind='create';path='/v1/order/create';message_key='create';payload_json='{"origin_order_number":"TEST1","note":"changed"}'}) + $order.requests
     Mock Invoke-CrossroadsRequest -ModuleName CrossroadsIntegration {
       if ($Path -eq '/v1/order/create') { return [pscustomobject]@{http=422;data=[pscustomobject]@{detail="Duplicate order: An order with number 'TEST1' already exists for this tenant."}} }
@@ -88,13 +88,13 @@ Describe 'Crossroads creation prerequisite' {
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
     $receipts = @(Get-ChildItem $cache -Filter '*.X90.*.json')
     $receipts.Count | Should -Be 2
-    foreach ($receipt in $receipts) { $receipt.LastWriteTime = (Get-Date).AddHours(-47) }
+    Set-TestReceiptAge $receipts (Get-Date).AddHours(-47)
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.R20.X90.*.json').Count | Should -Be 1
     $order.updated_date = '2026-09-09T12:00:00'
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery).Count | Should -Be 0
-    foreach ($receipt in $receipts) { $receipt.LastWriteTime = (Get-Date).AddHours(-49) }
+    Set-TestReceiptAge $receipts (Get-Date).AddHours(-49)
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
     @(Get-ChildItem $cache -Filter '*.R20.X90.*.json').Count | Should -Be 0
@@ -170,7 +170,7 @@ Describe 'Crossroads creation prerequisite' {
     $proof = Get-ChildItem $cache -Filter '*.R10.X90.*.json' | Get-Content -Raw | ConvertFrom-Json
     $proof.path | Should -Be '/v1/order/get'
     $proof.response.verified_by | Should -Be order_get
-    foreach ($file in Get-ChildItem $cache -Filter '*.json') { $file.LastWriteTime = (Get-Date).AddDays(-30) }
+    Set-TestReceiptAge (Get-ChildItem $cache -Filter '*.json') (Get-Date).AddDays(-30)
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
     $order.requests[0].payload_json = '{"order":{"order_number":"TEST1"},"actual":"2026-09-08T12:15:00Z"}'
@@ -219,7 +219,7 @@ Describe 'Crossroads creation prerequisite' {
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
     $result.status | Should -Be @('rejected','synced','waiting_for_details')
-    foreach ($file in Get-ChildItem $cache -Filter '*.json') { $file.LastWriteTime = (Get-Date).AddDays(-30) }
+    Set-TestReceiptAge (Get-ChildItem $cache -Filter '*.json') (Get-Date).AddDays(-30)
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.R40.X90.*.json').Count | Should -Be 1
     @(Get-ChildItem $cache -Filter '*.R30.X40.*.json').Count | Should -Be 1
@@ -268,7 +268,7 @@ Describe 'Crossroads creation prerequisite' {
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
     $result = @(Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery)
     $result.status | Should -Be @('rejected','waiting_for_update','waiting_for_update','waiting_for_details')
-    foreach ($file in Get-ChildItem $cache -Filter '*.json') { $file.LastWriteTime = (Get-Date).AddDays(-30) }
+    Set-TestReceiptAge (Get-ChildItem $cache -Filter '*.json') (Get-Date).AddDays(-30)
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.R20.X40.*.json').Count | Should -Be 1
     $null = Send-CrossroadsDelivery -ClientId fake -ClientSecret fake @delivery
