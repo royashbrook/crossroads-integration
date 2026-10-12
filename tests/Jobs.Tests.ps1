@@ -37,7 +37,7 @@ Describe 'Invoke-CrossroadsOrders' {
         $cacheDir -eq (Join-Path $dir "cache/$expected") -and $clientSecret -eq 'from-env-secret' -and -not $OriginInstance
       }
     }
-    Should -Invoke Clear-Files -ModuleName CrossroadsIntegration -Times 1 -Exactly
+    Should -Invoke Clear-Files -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter { -not $FilenameDateFormat }
     $log = Get-Log $dir
     $log | Should -Contain 'Start'
     $log | Should -Contain 'Get Data'
@@ -51,6 +51,15 @@ Describe 'Invoke-CrossroadsOrders' {
     Invoke-CrossroadsOrders $path | Out-Null
     Should -Invoke Receive-CrossroadsTMWData -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $CacheDir -eq (Join-Path $dir 'cache') }
     Should -Invoke Send-CrossroadsDelivery -ModuleName CrossroadsIntegration -Times 2 -Exactly -ParameterFilter { $OriginInstance -eq 'TMW' }
+  }
+
+  It 'passes optional filename-day cleanup without changing retention filters' {
+    $base.filename_date_format = 'yyyyMMdd'
+    $path = Set-Settings $dir $base
+    Invoke-CrossroadsOrders $path | Out-Null
+    Should -Invoke Clear-Files -ModuleName CrossroadsIntegration -Times 1 -Exactly -ParameterFilter {
+      $FilenameDateFormat -ceq 'yyyyMMdd' -and $cfg.keepdays -eq 10 -and $cfg.purgefiles -ceq '*.log'
+    }
   }
 
   It 'names a missing secret before anything runs' {

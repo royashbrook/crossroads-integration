@@ -22,7 +22,7 @@ function Read-CrossroadsSettings([string]$Path) {
   $settings.directory = Split-Path $full
   # the module runs under strict mode, where reading an absent key throws; optional ones read as null
   foreach ($name in 'cache', 'origin_instance', 'keepdays', 'purgefiles', 'dry_run', 'max_uploads', 'max_documents',
-    'budget_seconds', 'keep_days', 'prior_attempts', 'read_legacy_state', 'scope', 'ebe', 'state', 'timeout_seconds') {
+    'budget_seconds', 'keep_days', 'prior_attempts', 'read_legacy_state', 'scope', 'ebe', 'state', 'timeout_seconds', 'filename_date_format') {
     if (-not $settings.ContainsKey($name)) { $settings[$name] = $null }
   }
   $settings
@@ -39,7 +39,9 @@ function Assert-CrossroadsSettings([hashtable]$Settings, [string[]]$Names) {
 
 function Clear-CrossroadsFeed([hashtable]$Settings) {
   if (-not $Settings.keepdays) { return }
-  l 'Cleanup'; Clear-Files @{ keepdays = $Settings.keepdays; purgefiles = $Settings.purgefiles }
+  $cleanup = @{}
+  if ($Settings.filename_date_format) { $cleanup.FilenameDateFormat = $Settings.filename_date_format }
+  l 'Cleanup'; Clear-Files @{ keepdays = $Settings.keepdays; purgefiles = $Settings.purgefiles } @cleanup
 }
 
 # TMW orders to Crossroads: one cache (cursor and proofs) per bill-to, so a newer customer never skips an older one's changes

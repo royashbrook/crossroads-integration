@@ -17,7 +17,11 @@ Invoke-CrossroadsOrders "$PSScriptRoot/settings.json"     # or Invoke-Crossroads
 `Invoke-CrossroadsOrders` receives TMW orders and delivers them, one cache per bill-to (`cache/<billto>`
 by default, or one shared folder named by `cache`). It logs `Start`, `Get Data`, `Use Data`, `Show Results`
 and `End` to `yyyyMMdd.log`, with the bill-to on its own line when there is more than one, and
-cleans up with `keepdays` and `purgefiles`.
+cleans up with `keepdays` and `purgefiles`. Optional `filename_date_format`
+(`yyyyMMdd` or `yyyy-MM-dd`) selects calendar-day filename-prefix retention
+instead of filesystem age, for fresh-clone jobs. The cutoff day is retained.
+Without that setting, cleanup keeps its existing mtime behavior. This applies
+to feed artifacts only, not delivery receipts or business cache expiry.
 
 ```json
 {
