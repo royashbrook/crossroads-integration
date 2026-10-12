@@ -8,3 +8,11 @@ function Confirm-TestCreation($cache, $number, $url = 'http://localhost:8808', $
     Write-DeliveryItem $item.file $item.data
   } $cache $number $url $tenant $destination
 }
+
+function Set-TestReceiptAge($files, $date) {
+  foreach ($file in @($files)) {
+    $data = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -DateKind String
+    $data | Add-Member recorded_at $date.ToUniversalTime().ToString('o') -Force
+    $data | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $file.FullName
+  }
+}

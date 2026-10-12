@@ -54,6 +54,10 @@ function Get-MessageKey($request) {
 }
 
 function Write-DeliveryItem($path, $item) {
+  if ($item.PSObject.Properties['state'] -and $item.state -in @('rejected', 'reconciled', 'sent') -and
+      (-not $item.PSObject.Properties['recorded_at'] -or $null -eq $item.recorded_at)) {
+    $item | Add-Member recorded_at (Get-Date).ToUniversalTime().ToString('o') -Force
+  }
   $temp = "$path.tmp"
   try {
     $item | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $temp -Encoding utf8 -ErrorAction Stop
@@ -247,15 +251,23 @@ function Initialize-Delivery($cacheDir) {
     if ($item.data.kind -eq 'create' -and $item.data.state -eq 'rejected' -and $creationBlocked.ContainsKey((Get-CreatedKey $item.data))) { $protected[$item.file] = $true }
   }
   $purge = @(Get-ChildItem $cacheDir -File | Where-Object {
-    ($_.Extension -eq '.cache' -or $_.Name -match '\.X(40|80|90)\.[0-9a-f]{64}\.json$') -and -not $protected.ContainsKey($_.FullName)
+    $_.Extension -eq '.cache' -or $_.Name -match '\.X(40|80|90)\.[0-9a-f]{64}\.json$'
   })
-  Push-Location $cacheDir
-  try {
-    if ($purge.Count) { $null = Clear-Files ([pscustomobject]@{ keepdays = 2; purgefiles = $purge.Name -join ',' }) }
-  }
-  finally {
-    Pop-Location
-  }
+  $now = (Get-Date).ToUniversalTime()
+  $expired = @(foreach ($file in $purge) {
+    $json = Get-Content -LiteralPath $file.FullName -Raw
+    $data = if ([string]::IsNullOrWhiteSpace($json) -and $file.Extension -eq '.cache') { [pscustomobject]@{} }
+      else { ConvertFrom-Json $json -Depth 64 -DateKind String }
+    # Old receipts and empty hash markers have no handoff age. Persist one grace period.
+    if (-not $data.PSObject.Properties['recorded_at'] -or $null -eq $data.recorded_at) {
+      $data | Add-Member recorded_at $now.ToString('o') -Force
+      Write-DeliveryItem $file.FullName $data
+    }
+    if ([datetimeoffset]$data.recorded_at -lt $now.AddDays(-2) -and -not $protected.ContainsKey($file.FullName)) {
+      $file.FullName
+    }
+  })
+  foreach ($file in $expired) { Remove-Item -LiteralPath $file }
   if ($purge.Count) { Get-DeliveryIndex $cacheDir -Prune } else { $index }
 }
 
@@ -380,6 +392,9 @@ function Add-Delivery($orders, $baseUrl, $cacheDir, $persist, $Tenant, $Destinat
 }
 
 function Set-DeliveryResult($item, $stateCode, $http, $status, $response, $index) {
+  if ($stateCode -ne 'X00' -and $item.data.state -eq 'pending') {
+    $item.data | Add-Member recorded_at (Get-Date).ToUniversalTime().ToString('o') -Force
+  }
   $item.data.http = $http
   $item.data.status = $status
   $item.data.response = $response

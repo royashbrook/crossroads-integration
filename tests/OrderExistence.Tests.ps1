@@ -1,4 +1,5 @@
 BeforeAll {
+  . (Join-Path $PSScriptRoot 'Confirm-TestCreation.ps1')
   $module = Import-Module (Join-Path $PSScriptRoot '../CrossroadsIntegration/CrossroadsIntegration.psd1') -Force -PassThru
 }
 
@@ -46,7 +47,7 @@ Describe 'Crossroads existence versus downstream sync' {
     $update.creation_check.exists | Should -BeTrue
     $update.creation_check.confirmed | Should -BeFalse
     $update.attempt_count | Should -Be 1
-    foreach ($file in Get-ChildItem $cache -Filter '*.json') { $file.LastWriteTime = (Get-Date).AddDays(-30) }
+    Set-TestReceiptAge (Get-ChildItem $cache -Filter '*.json') (Get-Date).AddDays(-30)
     Initialize-CrossroadsDelivery $cache
     @(Get-ChildItem $cache -Filter '*.R10.X90.*.json').Count | Should -Be 0
     $null = Add-CrossroadsDelivery -Orders @($order) -Persist $true @delivery
